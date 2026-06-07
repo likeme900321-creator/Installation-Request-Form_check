@@ -217,39 +217,4 @@ document.getElementById("checkBtn").addEventListener("click", function () {
     }
 });
 
-// ==========================================
-// 💡 4. [완벽 수정] 모바일 잔상까지 확실히 지우는 사진 삭제 로직
-// ==========================================
-document.getElementById("clearBtn").addEventListener("click", function () {
-    const cameraInput = document.getElementById("cameraInput");
-    const manualInput = document.getElementById("manualInput");
-    const ocrResultDiv = document.getElementById("ocrResult");
 
-    // 1. 모바일 브라우저 썸네일/파일명 잔상 버그를 깨는 핵심 처리
-    if (cameraInput) {
-        // input 태그를 복제하여 파일 데이터만 쏙 빼고 새것으로 갈아끼웁니다.
-        const newInput = cameraInput.cloneNode(true);
-        newInput.value = ""; // 파일 완전히 비우기
-        cameraInput.parentNode.replaceChild(newInput, cameraInput);
-        
-        // 💡 새롭게 갈아낀 input 태그에도 기존 사진 촬영(OCR) 이벤트가 작동하도록 재연결해 줍니다.
-        newInput.addEventListener("change", async function(e) {
-            // 기존 2번 로직(Tesseract.recognize...)의 작동을 보장하기 위해 
-            // 실제 프로젝트 환경에 맞춰 이 안에서 2번 이벤트를 다시 타게 하거나 
-            // 혹은 브라우저 기본 초기화용으로만 깔끔하게 비우셔도 됩니다.
-            // (가장 확실한 방법은 페이지 새로고침 없이 파일 등록창만 리셋하는 것입니다.)
-        });
-    }
-
-    // 2. 모델명 입력칸도 함께 깨끗이 비우기
-    if (manualInput) {
-        manualInput.value = "";
-    }
-
-    // 3. 안내 문구 초기화
-    if (ocrResultDiv) {
-        ocrResultDiv.innerHTML = "<span style='color: #64748b;'>사진이 삭제되었습니다. 다시 등록해 주세요.</span>";
-    }
-
-    alert("올려진 사진과 입력 데이터가 완전히 삭제되었습니다.");
-});
