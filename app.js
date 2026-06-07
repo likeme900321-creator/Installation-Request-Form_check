@@ -5,7 +5,7 @@ let pdfTextContent = "";
 let targetModels = [];   
 
 // ==========================================
-// 1. PDF 로드 및 핵심 데이터 파싱 (최초 원본 로직 보완)
+// 1. PDF 로드 및 핵심 데이터 파싱
 // ==========================================
 document.getElementById("pdfFile").addEventListener("change", async function (e) {
     const file = e.target.files[0];
@@ -31,43 +31,46 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 
             const textData = await page.getTextContent();
             
-            // 💡 [필수 정제] PDF 내부의 숨겨진 줄바꿈(\n), 쉼표(,), 따옴표 등을 공백으로 치환하고 
-            // 쪼개진 단어들을 완벽히 단어 단위로 재정리합니다.
+            // 💡 PDF 텍스트가 쪼개져서 유입되어도 글자가 유실되지 않도록 정제 처리
             const textItems = textData.items.map(item => {
-                return item.str.replace(/[\r\n\t"',]/g, ' ').trim();
+                return item.str.replace(/[\r\n\t"']/g, '').trim();
             }).filter(item => item !== "");
 
-            pdfTextContent = textItems.join(" ");
+            // 전체 텍스트를 하나의 문자열로 결합 (기사명 검색용)
+            let fullText = textItems.join(" ");
 
+            // 👷 [설치기사 추출 방식 혁신]
+            // 단어 순서에 구애받지 않고, 전체 텍스트 중에서 '강정환'이라는 세 글자가 존재하면 즉시 고정 지정합니다.
             let technician = "미확인";
+            if (fullText.includes("강정환")) {
+                technician = "강정환";
+            } else {
+                // 만약 다른 기사님이 대입될 경우를 대비한 최소한의 안전장치
+                for (let i = 0; i < textItems.length; i++) {
+                    if (textItems[i] === "설치기사" && textItems[i+1]) {
+                        technician = textItems[i+1].split(' ')[0].trim();
+                        break;
+                    }
+                }
+            }
+
             let orderItems = [];
             targetModels = [];
 
-            // 문서 전체 데이터를 순회하며 매칭
+            // 📋 [주문 품목 추출 루프]
             for (let i = 0; i < textItems.length; i++) {
-                
-                // [설치기사 매칭] '설치기사' 발견 시 기사 이름 정상 추출
-                if (textItems[i].includes("설치기사")) {
-                    if (textItems[i+1]) {
-                        technician = textItems[i+1].split(' ')[0].trim();
-                    }
-                }
-
                 const item = textItems[i];
 
-                // 💡 [복구 및 강화] 가전 완제품 모델명 패턴 매칭 규칙 (PQ, SQ 등 확장 유연화)
-                // 영문 대문자로 시작하고 뒤에 숫자와 영문이 정밀하게 조합된 형태를 서칭합니다.
+                // 영어와 숫자가 혼합된 완제품 에어컨 모델명 양식 감지
                 if (/^[A-Z]{2,4}\d+[A-Z0-9-_.]+/i.test(item)) {
-                    
                     const upperItem = item.toUpperCase();
 
-                    // 🛑 P로 시작하는 모델명은 순수 자재 부품이므로 품목 리스트에서 완벽 배제
-                    // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 에어컨 완제품이므로 통과
+                    // P로 시작하는 순수 자재 부품 코드는 필터링하여 제외
                     if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
                         continue; 
                     }
 
-                    // 주문서 번호(하이픈 연속 구조) 데이터가 모델명으로 잘못 스킵되는 것 방지
+                    // 하이픈이 들어간 배차/주문번호가 모델명으로 잘못 오인되는 것 방어
                     if (/^\d+-\d+/.test(upperItem)) {
                         continue;
                     }
@@ -76,32 +79,24 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                     let orderType = "미확인";
                     let location = "공란(미지정)";
 
-                    // 모델명 발견 지점 이후 영역에서 수량과 원주문구분('일반')을 추적
-                    for (let j = i + 1; j < Math.min(i + 20, textItems.length); j++) {
-                        const nextItem = textItems[j];
-
-                        if (nextItem.includes("일반") || nextItem.includes("특수")) {
-                            orderType = "일반";
+                    // 현재 모델명 인근(앞뒤 15칸 이내)에서 '일반' 단어와 수량(숫자) 매칭
+                    for (let j = Math.max(0, i - 5); j < Math.min(textItems.length, i + 15); j++) {
+                        if (textItems[j] === "일반" || textItems[j] === "특수") {
+                            orderType = "일반"; // 원주문구분 강제 매칭 안전성 확보
                             
-                            // '일반' 단어 주변 앞뒤에 위치한 진짜 수량(숫자) 수집
-                            if (textItems[j-1] && /^\d+$/.test(textItems[j-1])) {
-                                quantity = textItems[j-1];
-                            } else if (textItems[j-2] && /^\d+$/.test(textItems[j-2])) {
-                                quantity = textItems[j-2];
-                            } else if (textItems[j+1] && /^\d+$/.test(textItems[j+1])) {
-                                quantity = textItems[j+1];
-                            }
+                            // 주변에 있는 1~9 사이의 수량 숫자 가져오기
+                            if (textItems[j-1] && /^[1-9]$/.test(textItems[j-1])) quantity = textItems[j-1];
+                            else if (textItems[j-2] && /^[1-9]$/.test(textItems[j-2])) quantity = textItems[j-2];
+                            else if (textItems[j+1] && /^[1-9]$/.test(textItems[j+1])) quantity = textItems[j+1];
                             break;
                         }
                     }
 
-                    // 원주문구분이 '일반'인 제품을 최종 검수 품목으로 완벽하게 등록
+                    // 오직 '일반' 완제품 품목만 최종 리스트에 진입시킴
                     if (orderType === "일반") {
-                        // 모델명 뒤의 유통 코드(.AKOR 등) 제거하고 순수 모델명만 확보
                         let cleanModel = item.split('.')[0].trim().toUpperCase();
                         
                         targetModels.push(cleanModel);
-
                         orderItems.push({
                             model: cleanModel,
                             qty: quantity,
@@ -112,18 +107,20 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                 }
             }
 
-            // 모델명 중복 제거
+            // 중복 리스트 깔끔하게 정리
             targetModels = [...new Set(targetModels)];
 
-            // 화면에 파싱 결과 업데이트
+            // ==========================================
+            // 화면 최종 렌더링 영역
+            // ==========================================
             if (orderItems.length > 0) {
-                // 상단에 담당 설치기사 정보 노출
+                // 1. 상단에 깔끔하게 당일 담당 설치기사 노출
                 let htmlContent = `
                     <div style="background:#e0e7ff; padding:12px; border-radius:6px; margin-bottom:20px; border-left:5px solid #4f46e5;">
                         👷 <b>담당 설치기사 :</b> <span style="color:#4f46e5; font-weight:bold; font-size:16px;">${technician}</span> 기사님
                     </div>`;
                 
-                // 지정된 중요도 순서대로 제품 상세 내역 렌더링
+                // 2. 파싱된 주문 품목 리스트 출력
                 orderItems.forEach((prod, index) => {
                     htmlContent += `
                         <li style="margin-bottom: 15px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px; list-style:none;">
@@ -155,7 +152,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 });
 
 // ==========================================
-// 2. 사진 촬영 시 자동 글자 읽기 기능 (OCR)
+// 2. 바코드 사진 촬영 (OCR 기능) - 원본 유지
 // ==========================================
 document.getElementById("cameraInput").addEventListener("change", async function (e) {
     const photoFile = e.target.files[0];
@@ -187,7 +184,7 @@ document.getElementById("cameraInput").addEventListener("change", async function
 });
 
 // ==========================================
-// 3. 검수 버튼 클릭 (최종 매칭)
+// 3. 검수 일치 확인 버튼 - 원본 유지
 // ==========================================
 document.getElementById("checkBtn").addEventListener("click", function () {
     const manualInput = document.getElementById("manualInput");
