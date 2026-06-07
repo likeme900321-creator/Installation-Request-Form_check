@@ -148,7 +148,7 @@ document.getElementById("cameraInput").addEventListener("change", async function
     
     // 분석 시작 시 초기화
     manualInput.value = "";
-    ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 스티커 바코드 판독 중...</span>";
+    ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 스티커 모델명 판독 중...</span>";
 
     try {
         const result = await Tesseract.recognize(photoFile, 'eng', {
