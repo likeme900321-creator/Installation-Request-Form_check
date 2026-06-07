@@ -5,7 +5,7 @@ let pdfTextContent = "";
 let targetModels = [];   
 
 // ==========================================
-// 1. PDF 로드 및 5대 중요 데이터 핀포인트 파싱
+// 1. PDF 로드 및 핵심 주문 품목 파싱
 // ==========================================
 document.getElementById("pdfFile").addEventListener("change", async function (e) {
     const file = e.target.files[0];
@@ -31,39 +31,18 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 
             const textData = await page.getTextContent();
             
-            // 💡 PDF 내부 텍스트 조각들을 순수 텍스트만 남기고 정제하여 배열로 만듭니다.
+            // 💡 PDF 내부 텍스트 정제 및 배열화 (따옴표, 줄바꿈 제거)
             const textItems = textData.items.map(item => {
                 return item.str.replace(/[\r\n\t"']/g, '').trim();
             }).filter(item => item !== "");
 
             pdfTextContent = textItems.join(" ");
 
-            // [5대 중요 항목 초기 변수]
-            let technician = "미확인";
+            // 핵심 중요 항목 변수 초기화 (설치기사 제외)
             let orderItems = [];
             targetModels = [];
 
-            // 💡 [근본적 해결] 첫 번째 표에서 설치기사 찾으면 즉시 종료 (Break)
-            // 뒷부분에 나오는 '고객명', '연락처' 노이즈 단어가 변수를 덮어쓰는 것을 원천 차단합니다.
-            for (let i = 0; i < textItems.length; i++) {
-                if (textItems[i] === "설치기사") {
-                    // 표 구조상 '설치기사' 바로 다음 칸(i+1)에 기사님 이름이 옵니다.
-                    if (textItems[i+1]) {
-                        const candidate = textItems[i+1];
-                        
-                        // 이름이 올 자리에 노이즈 단어가 없다면 기사 이름으로 확정
-                        if (candidate !== "확인" && !candidate.includes("고객") && !candidate.includes("연락")) {
-                            technician = candidate;
-                        }
-                    }
-                    
-                    // ✨ 핵심: 첫 번째 표에서 '설치기사' 영역을 처리했다면, 
-                    // 뒤쪽 문서에 뭐가 남았든 간에 전체 기사 찾기 루프를 즉시 완전히 끝냅니다!
-                    break; 
-                }
-            }
-
-            // 💡 [정밀 필터] 표 내부 데이터 매칭 추출 (자재 원천 차단 및 일반 주문만)
+            // 💡 [정밀 필터] 표 내부 데이터 매칭 추출 (자재 원천 차단 + 일반 주문만)
             for (let i = 0; i < textItems.length; i++) {
                 const item = textItems[i];
 
@@ -72,8 +51,8 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                     
                     const upperItem = item.toUpperCase();
 
-                    // ❌ [자재 차단] P로 시작하는 모델명은 순수 자재이므로 완벽 배제
-                    // 단, PQ로 시작하는 모델명은 실제 에어컨 완제품이므로 통과
+                    // ❌ [요청 반영] P로 시작하는 모델명은 순수 자재 부품이므로 품목 리스트에서 완벽 배제
+                    // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 에어컨 완제품이므로 통과
                     if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
                         continue; 
                     }
@@ -101,7 +80,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                         }
                     }
 
-                    // 💡 오직 원주문구분이 '일반'인 제품만 최종 목록에 등록
+                    // 💡 오직 원주문구분이 '일반'인 제품만 최종 검수 품목으로 등록
                     if (orderType === "일반") {
                         // 모델명 뒤의 유통 코드(.AKOR 등) 제거
                         let cleanModel = item.split('.')[0].trim().toUpperCase();
@@ -122,24 +101,20 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             targetModels = [...new Set(targetModels)];
 
             // ==========================================
-            // 화면 업데이트 (중요도 순서대로 정렬 표시)
+            // 화면 업데이트 (설치기사 제외, 품목 중심 정렬)
             // ==========================================
             if (orderItems.length > 0) {
-                // 1순위 설치기사 상단 고정
-                let htmlContent = `
-                    <li style="list-style:none; margin-bottom:15px; background:#e0e7ff; padding:10px; border-radius:6px; border-left:5px solid #4f46e5;">
-                        👷 <b>1. 설치기사 :</b> <span style="font-size:16px; color:#1e1b4b; font-weight:bold;">${technician} 기사님</span>
-                    </li>`;
+                let htmlContent = "";
                 
-                // 2~5순위 제품 상세 내역 렌더링
+                // 지정된 중요도 순서대로 제품 상세 내역 렌더링
                 orderItems.forEach((prod, index) => {
                     htmlContent += `
-                        <li style="margin-bottom: 12px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 8px; list-style:none;">
-                            <b style="color:#4f46e5;">📋 [주문 품목 ${index + 1}]</b><br>
-                            • <b>2. 모델명 :</b> <span style="color:#b91c1c; font-weight:bold;">${prod.model}</span><br>
-                            • <b>3. 수량 :</b> ${prod.qty} 개<br>
-                            • <b>4. 원주문구분 :</b> <span style="background:#fef08a; padding:1px 4px; border-radius:3px;">${prod.type}</span><br>
-                            • <b>5. 제품위치 :</b> <span style="color:#64748b;">${prod.loc}</span>
+                        <li style="margin-bottom: 15px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px; list-style:none;">
+                            <b style="color:#4f46e5; font-size:15px;">📋 [주문 품목 ${index + 1}]</b><br><br>
+                            • <b>1. 모델명 :</b> <span style="color:#b91c1c; font-weight:bold; font-size:16px;">${prod.model}</span><br>
+                            • <b>2. 수량 :</b> <span style="font-weight:bold;">${prod.qty}</span> 개<br>
+                            • <b>3. 원주문구분 :</b> <span style="background:#fef08a; padding:1px 4px; border-radius:3px; font-weight:bold;">${prod.type}</span><br>
+                            • <b>4. 제품위치 :</b> <span style="color:#64748b;">${prod.loc}</span>
                         </li>`;
                 });
                 
@@ -147,9 +122,8 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                 document.getElementById("status").innerText = `확인완료 0 / ${targetModels.length}`;
             } else {
                 orderList.innerHTML = `
-                    <li style="list-style:none; background:#f1f5f9; padding:10px; border-radius:6px;">
-                        👷 <b>1. 설치기사 :</b> <span style="font-weight:bold;">${technician}</span><br><br>
-                        ⚠️ 검수 대상 제품(원주문구분: 일반)이 없거나 순수 자재 코드만 존재하여 품목이 등록되지 않았습니다.
+                    <li style="list-style:none; background:#f1f5f9; padding:15px; border-radius:6px; color:#475569;">
+                        ⚠️ 검수 대상 제품(원주문구분: 일반)이 없거나 순수 자재 코드만 존재하여 등록된 품목이 없습니다.
                     </li>`;
                 document.getElementById("status").innerText = `확인완료 0 / 0`;
             }
@@ -163,7 +137,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 });
 
 // ==========================================
-// 2. 사진 촬영 및 검수 매칭 로직 (기존 동일)
+// 2. 사진 촬영 시 자동 글자 읽기 기능
 // ==========================================
 document.getElementById("cameraInput").addEventListener("change", async function (e) {
     const photoFile = e.target.files[0];
@@ -189,33 +163,4 @@ document.getElementById("cameraInput").addEventListener("change", async function
                 break;
             }
         }
-    } catch (err) {
-        ocrResultDiv.innerText = "사진 인식 실패 (모델명 수동 입력 검수 가능)";
     }
-});
-
-document.getElementById("checkBtn").addEventListener("click", function () {
-    const manualInput = document.getElementById("manualInput");
-    const statusDiv = document.getElementById("status");
-    const modelToCompare = manualInput.value.trim().toUpperCase();
-
-    if (modelToCompare === "") {
-        alert("모델명을 입력하거나 사진을 등록하세요.");
-        return;
-    }
-
-    if (modelToCompare.startsWith('P') && !modelToCompare.startsWith('PQ')) {
-        alert("❌ 해당 코드는 자재 부품이므로 검수 대상이 아닙니다.");
-        return;
-    }
-
-    const isMatched = targetModels.includes(modelToCompare);
-
-    if (isMatched) {
-        alert(`✅ 검수 성공!\n의뢰서 정보와 일치합니다: ${modelToCompare}`);
-        statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">확인완료 1 / ${targetModels.length} (일치: ${modelToCompare})</span>`;
-    } else {
-        alert(`❌ 검수 실패!\n검수 대상 품목 목록에 [${modelToCompare}] 제품이 존재하지 않습니다.`);
-        statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">미일치 제품 발견</span>`;
-    }
-});
