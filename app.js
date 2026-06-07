@@ -85,68 +85,61 @@
 
                 // 텍스트 추출 및 노이즈 기호 삭제
                 const textContent = await page.getTextContent();
-                const textItems = textContent.items.map(item => {
-                    if (!item || !item.str) return "";
-                    return item.str.replace(/[\r\n\t"']/g, '').trim();
-                }).filter(item => item !== "");
+                
+                // 💡 [핵심 해결책] 쪼개진 단어들을 매칭하기 쉽게 전체 줄바꿈/기호를 다 지운 통짜 문자열로 병합
+                let fullText = textContent.items.map(item => item.str || "").join(" ");
+                // 정제: 큰따옴표, 따옴표 제거 및 공백 정렬
+                fullText = fullText.replace(/[\r\n\t"']/g, " ").trim();
 
-                if (textItems.length === 0) return;
-
-                // 기사명 추출
+                // 🕵️‍♂️ 통짜 문자열에서 기사명 추출 (설치기사 문구 바로 뒤 단어 매칭)
                 let technicianName = "미지정";
-                const techIndex = textItems.findIndex(text => text.includes("설치기사"));
-                if (techIndex !== -1 && textItems[techIndex + 1]) {
-                    technicianName = textItems[techIndex + 1].replace(/,/g, '').trim();
+                const techMatch = fullText.match(/설치기사\s+([가-힣]{2,4})/);
+                if (techMatch && techMatch[1]) {
+                    technicianName = techMatch[1];
                 }
 
-                // 고객명 추출
+                // 🕵️‍♂️ 통짜 문자열에서 고객명 추출 (고객명 문구 바로 뒤 단어 매칭)
                 let customerName = "미확인";
-                const customerIndex = textItems.findIndex(text => text.includes("고객명"));
-                if (customerIndex !== -1 && textItems[customerIndex + 1]) {
-                    customerName = textItems[customerIndex + 1].replace(/,/g, '').trim();
+                const customerMatch = fullText.match(/고객명\s+([가-힣]{2,4})/);
+                if (customerMatch && customerMatch[1]) {
+                    customerName = customerMatch[1];
                 }
 
-                // 품목 모델명 정밀 스캔
-                let products = [];
-                for (let i = 0; i < textItems.length; i++) {
-                    let upperText = textItems[i].replace(/,/g, '').trim().toUpperCase();
+                // 📋 [품목 추출 대수술] 에어컨 모델명 정규식 패턴 자동 스캔 
+                // 조건: 영문 대문자와 숫자가 섞여있고 최소 6글자 이상인 단어 추출
+                const words = fullText.split(/\s+/);
+                let uniqueProducts = [];
+                let seenModels = new Set();
 
-                    if (/^[A-Z0-9._-]+$/i.test(upperText)) {
-                        if (upperText.startsWith('PQ')) continue; 
-                        if (upperText.length < 5 || /^\d+$/.test(upperText)) continue;
-                        if (/^\d+-\d+/.test(upperText)) continue; 
+                for (let word of words) {
+                    let cleanWord = word.replace(/,/g, '').trim().toUpperCase();
+                    
+                    // 에어컨 완제품 모델명 패턴 분석 (알파벳+숫자 혼합, 자재부품 PQ 제외, 길이 제한)
+                    if (/^[A-Z0-9.-]+$/.test(cleanWord) && cleanWord.length >= 6) {
+                        if (cleanWord.startsWith('PQ')) continue;           // 부품 제외
+                        if (/^\d+$/.test(cleanWord)) continue;               // 순수 숫자 제외
+                        if (cleanWord.includes('202606')) continue;         // 날짜 제외
+                        if (cleanWord.startsWith('010-')) continue;          // 전화번호 제외
+                        if (cleanWord.includes('112343')) continue;         // 주문서번호 패턴 제외
 
-                        let quantity = "1";
-                        let isNormalOrder = false;
+                        // 마침표나 확장자 찌꺼기가 붙어있다면 제거
+                        let finalModel = cleanWord.split('.')[0].trim();
 
-                        for (let j = Math.max(0, i - 2); j < Math.min(textItems.length, i + 15); j++) {
-                            if (textItems[j].includes("일반") || textItems[j].includes("특수")) {
-                                isNormalOrder = true;
-                                if (textItems[j-1] && /^[1-9]$/.test(textItems[j-1].trim())) quantity = textItems[j-1].trim();
-                                else if (textItems[j+1] && /^[1-9]$/.test(textItems[j+1].trim())) quantity = textItems[j+1].trim();
-                                break;
-                            }
-                        }
-
-                        if (isNormalOrder) {
-                            let cleanModel = upperText.split('.')[0].trim();
-                            products.push({ model: cleanModel, qty: quantity });
+                        if (!seenModels.has(finalModel)) {
+                            seenModels.add(finalModel);
+                            
+                            // 기본 수량은 우선 1개로 세팅 (수량 컬럼이 찢어져 있어서 완제품 모델명 자체를 타겟팅)
+                            uniqueProducts.push({
+                                model: finalModel,
+                                qty: "1"
+                            });
                         }
                     }
                 }
-
-                const uniqueProducts = [];
-                const seenModels = new Set();
-                products.forEach(p => {
-                    if (!seenModels.has(p.model)) {
-                        seenModels.add(p.model);
-                        uniqueProducts.push(p);
-                    }
-                });
 
                 currentPageTargetModels = uniqueProducts.map(p => p.model);
 
-                // 화면 글씨 뿌리기
+                // 화면 우측/하단 UI 글씨 뿌리기
                 let htmlContent = `
                     <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                         👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -163,7 +156,7 @@
                     uniqueProducts.forEach((prod, idx) => {
                         htmlContent += `
                             <div style="margin-bottom: 8px; border:1px solid #e2e8f0; padding:10px; border-radius:6px; background:white;">
-                                • <b>모델 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold;">${prod.model}</span> 
+                                • <b>모델 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
                                 <span style="float:right; color:#1e293b; font-weight:bold;">${prod.qty} 개</span>
                             </div>
                         `;
@@ -171,6 +164,7 @@
                 }
                 orderList.innerHTML = htmlContent;
                 pageIndicator.innerText = `의뢰서 건수: ${pageNumber} / ${totalPdfPages} 장`;
+                document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (품목: ${currentPageTargetModels.length}개)</span>`;
 
             } catch (err) {
                 if (err.name === 'RenderingCancelledException') {
