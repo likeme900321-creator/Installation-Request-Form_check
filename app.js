@@ -31,7 +31,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 
             const textData = await page.getTextContent();
             
-            // 💡 [중요] 줄바꿈과 따옴표, 쉼표를 제거하고 순수 데이터만 추출하여 배열화합니다.
+            // 💡 PDF 내부 텍스트 조각들을 순수 텍스트만 남기고 정제하여 배열로 만듭니다.
             const textItems = textData.items.map(item => {
                 return item.str.replace(/[\r\n\t"']/g, '').trim();
             }).filter(item => item !== "");
@@ -43,49 +43,23 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             let orderItems = [];
             targetModels = [];
 
-            // 💡 [원인 분석 반영] 설치기사 가로/세로 꼬임 해결 알고리즘
-            // "설치기사" 키워드를 찾으면, 가로 쪼개기 오류로 인해 뒤로 밀려난 진짜 이름 조각을 
-            // 시스템 노이즈를 전부 스킵하면서 정밀 추적합니다.
+            // 💡 [근본적 해결] 첫 번째 표에서 설치기사 찾으면 즉시 종료 (Break)
+            // 뒷부분에 나오는 '고객명', '연락처' 노이즈 단어가 변수를 덮어쓰는 것을 원천 차단합니다.
             for (let i = 0; i < textItems.length; i++) {
-                // 문서에서 "설치기사" 단어 자체를 포함하거나 일치하는 구간을 만났을 때
-                if (textItems[i] === "설치기사" || textItems[i].includes("설치기사")) {
+                if (textItems[i] === "설치기사") {
+                    // 표 구조상 '설치기사' 바로 다음 칸(i+1)에 기사님 이름이 옵니다.
+                    if (textItems[i+1]) {
+                        const candidate = textItems[i+1];
+                        
+                        // 이름이 올 자리에 노이즈 단어가 없다면 기사 이름으로 확정
+                        if (candidate !== "확인" && !candidate.includes("고객") && !candidate.includes("연락")) {
+                            technician = candidate;
+                        }
+                    }
                     
-                    // 만약 텍스트 조각 자체가 "설치기사 강정환" 처럼 결합되어 들어온 경우 바로 추출
-                    if (textItems[i].includes(" ") && textItems[i].length > 4) {
-                        const directName = textItems[i].replace("설치기사", "").trim();
-                        if (/^[가-힣]{2,4}$/.test(directName)) {
-                            technician = directName;
-                            break;
-                        }
-                    }
-
-                    // 가로 구조로 쪼개져서 뒤로 밀린 경우, 최대 8칸까지 넓혀서 추적
-                    for (let j = i + 1; j <= i + 8; j++) {
-                        if (textItems[j]) {
-                            const cand = textItems[j];
-
-                            // ❌ 기사님 이름이 될 수 없는 명백한 타이틀 노이즈들을 완벽 필터링
-                            if (cand === "확인" || 
-                                cand.includes("고객") || 
-                                cand.includes("연락") || 
-                                cand.includes("최종") || 
-                                cand.includes("성명") || 
-                                cand.includes("주소") || 
-                                cand.includes("배관") ||
-                                cand.includes("YES") ||
-                                cand.includes("NO")) {
-                                continue; // 기사 이름이 아니므로 다음 칸 확인
-                            }
-
-                            // 🔎 진짜 기사님 성함 조건: 2~4자 사이의 순수 한글 이름만 허용
-                            if (/^[가-힣]{2,4}$/.test(cand)) {
-                                technician = cand;
-                                break; // j 루프 탈출
-                            }
-                        }
-                    }
-                    // 기사님 이름을 성공적으로 매칭했다면 더 이상 아래쪽 테이블로 내려가지 않고 즉시 루프 종료!
-                    if (technician !== "미확인") break;
+                    // ✨ 핵심: 첫 번째 표에서 '설치기사' 영역을 처리했다면, 
+                    // 뒤쪽 문서에 뭐가 남았든 간에 전체 기사 찾기 루프를 즉시 완전히 끝냅니다!
+                    break; 
                 }
             }
 
@@ -99,7 +73,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                     const upperItem = item.toUpperCase();
 
                     // ❌ [자재 차단] P로 시작하는 모델명은 순수 자재이므로 완벽 배제
-                    // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 완제품 가전이므로 통과
+                    // 단, PQ로 시작하는 모델명은 실제 에어컨 완제품이므로 통과
                     if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
                         continue; 
                     }
@@ -189,7 +163,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 });
 
 // ==========================================
-// 2. 사진 촬영 시 자동 글자 읽기 기능
+// 2. 사진 촬영 및 검수 매칭 로직 (기존 동일)
 // ==========================================
 document.getElementById("cameraInput").addEventListener("change", async function (e) {
     const photoFile = e.target.files[0];
@@ -220,9 +194,6 @@ document.getElementById("cameraInput").addEventListener("change", async function
     }
 });
 
-// ==========================================
-// 3. 검수 버튼 클릭 (최종 매칭)
-// ==========================================
 document.getElementById("checkBtn").addEventListener("click", function () {
     const manualInput = document.getElementById("manualInput");
     const statusDiv = document.getElementById("status");
