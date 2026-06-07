@@ -1,0 +1,66 @@
+
+            <input type="file"
+                   id="pdfFile"
+                   accept=".pdf">
+
+        </div>
+
+        <div class="card">
+
+            <h3>주문 품목</h3>
+
+            <ul id="orderList">
+                <li>아직 불러온 품목이 없습니다.</li>
+            </ul>
+
+        </div>
+
+        <div class="card">
+
+            <h3>스티커 검수</h3>
+
+            <input type="file"
+                   accept="image/*"
+                   capture="environment"
+                   id="cameraInput">
+
+            <br><br>
+
+            <input type="text"
+                   id="manualInput"
+                   placeholder="모델명 직접 입력">
+
+            <button id="checkBtn">
+                검수
+            </button>
+
+        </div>
+
+        <div class="card">
+
+            <h3>인식 결과</h3>
+
+            <div id="ocrResult">
+                아직 인식된 내용 없음
+            </div>
+
+        </div>
+
+        <div class="card">
+
+            <h3>검수 현황</h3>
+
+            <div id="status">
+
+                확인완료 0 / 0
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <script src="app.js"></script>
+
+</body>
+</html>
