@@ -63,7 +63,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 let targetModels = [];   
 
 // ==========================================
-// 로직 1. PDF 분석 및 품목 리스트업 (자재 코드 완벽 필터링)
+// 로직 1. PDF 분석 및 품목 리스트업
 // ==========================================
 document.getElementById("pdfFile").addEventListener("change", async function (e) {
     const file = e.target.files[0];
@@ -93,17 +93,22 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             let orderItems = [];
             targetModels = [];
 
-            // 완제품 필터링 및 수량 추적
             for (let i = 0; i < textItems.length; i++) {
                 const item = textItems[i];
+                const upperItem = item.toUpperCase();
 
-                // 에어컨 완제품 모델명 패턴 정밀 매칭 (영어 대문자+숫자 조합)
+                // 🛑 [근본적 해결] 실제 에어컨 완제품 모델명 패턴만 통과시키는 초정밀 가이드라인
+                // 1. PQ로 시작하는 완제품이거나, S 또는 F 또는 위주의 실제 에어컨 완제품 모델 코드 형태 패턴 분석
+                // 2. 단, P로 시작하되 PQ가 아닌 순수 자재용 부품 코드는 첫 단계에서 무조건 스킵(차단)합니다.
+                if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
+                    continue; 
+                }
+
+                // 영어 2~4자로 시작하고 숫자가 연이어 나오는 실제 '완제품 가전 모델명 형태' 패턴 검사 규칙 강화
                 if (/^[A-Z]{2,4}\d+[A-Z0-9-_.]+/i.test(item)) {
-                    const upperItem = item.toUpperCase();
-
-                    // 🛑 [핵심 필터] P로 시작하는 순수 자재 코드는 여기서 완전 차단 및 스킵 처리
-                    // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 완제품 가전이므로 통과시킵니다.
-                    if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
+                    
+                    // 주문서 번호나 날짜 형태의 무관한 코드가 들어오는 것을 방지하는 안전장치
+                    if (upperItem.includes('-') && /^\d+-\d+/.test(upperItem)) {
                         continue; 
                     }
 
@@ -111,23 +116,27 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                     let orderType = "미확인";
                     let location = "공란(미지정)";
 
-                    // 수량 및 원주문구분('일반') 추적 루프
+                    // 주변 데이터 영역에서 원주문구분('일반') 및 수량 추적
                     for (let j = i + 1; j < Math.min(i + 15, textItems.length); j++) {
                         const nextItem = textItems[j];
                         if (nextItem === "일반" || nextItem === "특수") {
                             orderType = nextItem;
                             if (textItems[j-1] && /^\d+$/.test(textItems[j-1])) quantity = textItems[j-1];
                             else if (textItems[j-2] && /^\d+$/.test(textItems[j-2])) quantity = textItems[j-2];
-                            else if (textItems[j+1] && /^\d+$/.test(textItems[j+1])) quantity = quantity = textItems[j+1];
+                            else if (textItems[j+1] && /^\d+$/.test(textItems[j+1])) quantity = textItems[j+1];
                             break;
                         }
                     }
 
-                    // 오직 원주문구분이 '일반'인 제품만 최종 목록에 등록
+                    // 오직 원주문구분이 '일반'인 진짜 에어컨 완제품 세트/단품 항목만 최종 필터링 등록
                     if (orderType === "일반") {
                         let cleanModel = item.split('.')[0].trim().toUpperCase();
-                        targetModels.push(cleanModel);
-                        orderItems.push({ model: cleanModel, qty: quantity, type: orderType, loc: location });
+                        
+                        // 중복 유입 및 무관한 단어 차단 안전장치
+                        if(cleanModel.length >= 5) {
+                            targetModels.push(cleanModel);
+                            orderItems.push({ model: cleanModel, qty: quantity, type: orderType, loc: location });
+                        }
                     }
                 }
             }
@@ -135,7 +144,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             // 중복 모델 제거
             targetModels = [...new Set(targetModels)];
 
-            // 화면 렌더링 (설치기사 관련 UI 코드는 존재하지 않음)
+            // 화면 최종 출력 (설치기사 및 불필요한 노이즈 완전 박멸)
             if (orderItems.length > 0) {
                 let htmlContent = "";
                 orderItems.forEach((prod, index) => {
@@ -165,3 +174,63 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 
 // ==========================================
 // 로직 2. 카메라 촬영 및 OCR 글자 인식
+// ==========================================
+document.getElementById("cameraInput").addEventListener("change", async function (e) {
+    const photoFile = e.target.files[0];
+    if (!photoFile) return;
+
+    const manualInput = document.getElementById("manualInput");
+    const ocrResultDiv = document.getElementById("ocrResult");
+    
+    manualInput.value = "";
+    ocrResultDiv.innerText = "⏳ 스티커 글자 분석 중...";
+
+    try {
+        const result = await Tesseract.recognize(photoFile, 'eng', {
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+        });
+        
+        const detectedText = result.data.text.replace(/\s+/g, '').toUpperCase();
+        ocrResultDiv.innerText = "인식 완료! 검수 버튼을 눌러주세요.";
+
+        for (let model of targetModels) {
+            if (detectedText.includes(model)) {
+                manualInput.value = model;
+                break;
+            }
+        }
+    } catch (err) {
+        ocrResultDiv.innerText = "인식 실패 (수동 입력 가능)";
+    }
+});
+
+// ==========================================
+// 로직 3. 현장 제품 검수 매칭 확인
+// ==========================================
+document.getElementById("checkBtn").addEventListener("click", function () {
+    const manualInput = document.getElementById("manualInput");
+    const statusDiv = document.getElementById("status");
+    const modelToCompare = manualInput.value.trim().toUpperCase();
+
+    if (modelToCompare === "") {
+        alert("모델명을 입력하시거나 사진을 찍어주세요.");
+        return;
+    }
+
+    if (modelToCompare.startsWith('P') && !modelToCompare.startsWith('PQ')) {
+        alert("❌ 자재용 부품 코드는 검수 대상이 아닙니다.");
+        return;
+    }
+
+    if (targetModels.includes(modelToCompare)) {
+        alert(`✅ 일치 확인!\n의뢰서 제품이 맞습니다: ${modelToCompare}`);
+        statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">확인완료 1 / ${targetModels.length} (일치: ${modelToCompare})</span>`;
+    } else {
+        alert(`❌ 일치하지 않음!\n리스트에 없는 제품입니다: ${modelToCompare}`);
+        statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">미일치 제품 존재</span>`;
+    }
+});
+</script>
+
+</body>
+</html>
