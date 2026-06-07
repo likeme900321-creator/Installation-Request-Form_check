@@ -148,7 +148,7 @@ document.getElementById("cameraInput").addEventListener("change", async function
     
     // 분석 시작 시 초기화
     manualInput.value = "";
-    ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 스티커 모델명 판독 중...</span>";
+    ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 스티커 바코드 판독 중...</span>";
 
     try {
         const result = await Tesseract.recognize(photoFile, 'eng', {
@@ -161,7 +161,7 @@ document.getElementById("cameraInput").addEventListener("change", async function
         let isMatched = false;
         let matchedModel = "";
 
-        // 💡 [기사님 요청 반영]: 의뢰서 모델명이 사진 판독 글자 안에 100% 정확히 녹아있는지 검사
+        // 의뢰서 모델명이 사진 판독 글자 안에 100% 정확히 녹아있는지 검사
         for (let model of targetModels) {
             if (detectedText.includes(model)) {
                 isMatched = true;
@@ -215,4 +215,27 @@ document.getElementById("checkBtn").addEventListener("click", function () {
         alert(`❌ 검수 실패!\n검수 대상 품목 목록에 [${modelToCompare}] 제품이 존재하지 않습니다.`);
         statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">미일치 제품 발견</span>`;
     }
+});
+
+// ==========================================
+// 💡 4. [신규 추가] 지우기 버튼 클릭 시 입력 정보 초기화
+// ==========================================
+document.getElementById("clearBtn").addEventListener("click", function () {
+    const cameraInput = document.getElementById("cameraInput");
+    const manualInput = document.getElementById("manualInput");
+    const ocrResultDiv = document.getElementById("ocrResult");
+    const statusDiv = document.getElementById("status");
+
+    // 파일 선택창 비우기
+    if (cameraInput) cameraInput.value = "";
+    // 모델명 입력칸 비우기
+    if (manualInput) manualInput.value = "";
+    // 안내 문구 초기화
+    if (ocrResultDiv) ocrResultDiv.innerHTML = "사진을 등록하거나 모델명을 입력해 주세요.";
+    // 상단 검수 상태 바 초기화 (의뢰서가 등록되어 있다면 개수 유지)
+    if (statusDiv) {
+        statusDiv.innerHTML = `확인완료 0 / ${targetModels.length}`;
+    }
+
+    alert("올렸던 사진 데이터와 결과가 깨끗하게 지워졌습니다.");
 });
