@@ -218,24 +218,14 @@ document.getElementById("checkBtn").addEventListener("click", function () {
 });
 
 // ==========================================
-// 💡 4. [신규 추가] 지우기 버튼 클릭 시 입력 정보 초기화
+// 💡 4. [수정 반영] 스티커 사진 지우기 기능 (사진 초기화 전용)
 // ==========================================
 document.getElementById("clearBtn").addEventListener("click", function () {
     const cameraInput = document.getElementById("cameraInput");
-    const manualInput = document.getElementById("manualInput");
-    const ocrResultDiv = document.getElementById("ocrResult");
-    const statusDiv = document.getElementById("status");
 
-    // 파일 선택창 비우기
-    if (cameraInput) cameraInput.value = "";
-    // 모델명 입력칸 비우기
-    if (manualInput) manualInput.value = "";
-    // 안내 문구 초기화
-    if (ocrResultDiv) ocrResultDiv.innerHTML = "사진을 등록하거나 모델명을 입력해 주세요.";
-    // 상단 검수 상태 바 초기화 (의뢰서가 등록되어 있다면 개수 유지)
-    if (statusDiv) {
-        statusDiv.innerHTML = `확인완료 0 / ${targetModels.length}`;
+    // 다른 요소는 건드리지 않고 오직 스티커 사진 업로드 상태만 완전 리셋
+    if (cameraInput) {
+        cameraInput.value = ""; 
+        alert("올렸던 스티커 사진이 삭제되었습니다.");
     }
-
-    alert("올렸던 사진 데이터와 결과가 깨끗하게 지워졌습니다.");
 });
