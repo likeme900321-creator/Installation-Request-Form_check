@@ -57,13 +57,12 @@
 </div>
 
 <script>
-// PDF.js 기본 워커 지정
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
 let targetModels = [];   
 
 // ==========================================
-// 로직 1. PDF 분석 및 품목 리스트업
+// 로직 1. PDF 분석 및 품목 리스트업 (클린 버전)
 // ==========================================
 document.getElementById("pdfFile").addEventListener("change", async function (e) {
     const file = e.target.files[0];
@@ -97,19 +96,18 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                 const item = textItems[i];
                 const upperItem = item.toUpperCase();
 
-                // 🛑 [근본적 해결] 실제 에어컨 완제품 모델명 패턴만 통과시키는 초정밀 가이드라인
-                // 1. PQ로 시작하는 완제품이거나, S 또는 F 또는 위주의 실제 에어컨 완제품 모델 코드 형태 패턴 분석
-                // 2. 단, P로 시작하되 PQ가 아닌 순수 자재용 부품 코드는 첫 단계에서 무조건 스킵(차단)합니다.
-                if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
-                    continue; 
-                }
-
-                // 영어 2~4자로 시작하고 숫자가 연이어 나오는 실제 '완제품 가전 모델명 형태' 패턴 검사 규칙 강화
-                if (/^[A-Z]{2,4}\d+[A-Z0-9-_.]+/i.test(item)) {
+                // 1. 영어 대문자와 숫자가 섞인 모델명 형태 패턴 매칭
+                if (/^[A-Z0-9._-]+$/i.test(upperItem)) {
                     
-                    // 주문서 번호나 날짜 형태의 무관한 코드가 들어오는 것을 방지하는 안전장치
-                    if (upperItem.includes('-') && /^\d+-\d+/.test(upperItem)) {
+                    // 🛑 [자재 차단] P로 시작하는 순수 자재 부품 코드는 무조건 즉시 스킵!
+                    // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 완제품이므로 통과시킵니다.
+                    if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
                         continue; 
+                    }
+
+                    // 🛑 [주문번호 우회] 모델명이 너무 짧거나 순수 숫자 단독, 혹은 기사 이름 영역은 제외
+                    if (upperItem.length < 5 || /^\d+$/.test(upperItem)) {
+                        continue;
                     }
 
                     let quantity = "1"; 
@@ -117,10 +115,12 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                     let location = "공란(미지정)";
 
                     // 주변 데이터 영역에서 원주문구분('일반') 및 수량 추적
-                    for (let j = i + 1; j < Math.min(i + 15, textItems.length); j++) {
+                    for (let j = i + 1; j < Math.min(i + 12, textItems.length); j++) {
                         const nextItem = textItems[j];
                         if (nextItem === "일반" || nextItem === "특수") {
                             orderType = nextItem;
+                            
+                            // '일반' 단어 앞뒤 근처에 있는 실제 수량 숫자 수집
                             if (textItems[j-1] && /^\d+$/.test(textItems[j-1])) quantity = textItems[j-1];
                             else if (textItems[j-2] && /^\d+$/.test(textItems[j-2])) quantity = textItems[j-2];
                             else if (textItems[j+1] && /^\d+$/.test(textItems[j+1])) quantity = textItems[j+1];
@@ -130,10 +130,11 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 
                     // 오직 원주문구분이 '일반'인 진짜 에어컨 완제품 세트/단품 항목만 최종 필터링 등록
                     if (orderType === "일반") {
-                        let cleanModel = item.split('.')[0].trim().toUpperCase();
+                        // 모델명 뒤의 유통 코드(.AKOR 등) 제거
+                        let cleanModel = upperItem.split('.')[0].trim();
                         
-                        // 중복 유입 및 무관한 단어 차단 안전장치
-                        if(cleanModel.length >= 5) {
+                        // 하이픈이 섞인 주문서 번호 텍스트 유입 최종 방어
+                        if (!/^\d+-\d+/.test(cleanModel)) {
                             targetModels.push(cleanModel);
                             orderItems.push({ model: cleanModel, qty: quantity, type: orderType, loc: location });
                         }
@@ -144,7 +145,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             // 중복 모델 제거
             targetModels = [...new Set(targetModels)];
 
-            // 화면 최종 출력 (설치기사 및 불필요한 노이즈 완전 박멸)
+            // 화면 최종 출력 (설치기사 완전 제거 버전)
             if (orderItems.length > 0) {
                 let htmlContent = "";
                 orderItems.forEach((prod, index) => {
@@ -154,7 +155,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                             • <b>1. 모델명 :</b> <span style="color:#b91c1c; font-weight:bold; font-size:16px;">${prod.model}</span><br>
                             • <b>2. 수량 :</b> <span style="font-weight:bold;">${prod.qty}</span> 개<br>
                             • <b>3. 원주문구분 :</b> <span style="background:#fef08a; padding:1px 4px; border-radius:3px; font-weight:bold;">${prod.type}</span><br>
-                            • <b>4. 제품위치 :</b> <span style="color:#64748b;">${prod.loc}</span>
+                            • <b>4. PDF 제품위치 :</b> <span style="color:#64748b;">${prod.loc}</span>
                         </li>`;
                 });
                 orderList.innerHTML = htmlContent;
