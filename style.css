@@ -12,22 +12,61 @@ body {
 
 h1 {
     text-align: center;
+    color: #333;
+    margin-bottom: 25px;
 }
 
 .card {
     background: white;
-    padding: 15px;
+    padding: 20px;
     margin-bottom: 15px;
     border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+h3 {
+    margin-top: 0;
+    color: #555;
+    border-bottom: 2px solid #edf2f7;
+    padding-bottom: 8px;
 }
 
 button {
-    padding: 10px 20px;
+    width: 100%;
+    padding: 12px;
+    background-color: #4f46e5;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    font-weight: bold;
     cursor: pointer;
+}
+
+button:hover {
+    background-color: #4338ca;
 }
 
 input[type="text"] {
     width: 100%;
-    padding: 10px;
+    padding: 12px;
     box-sizing: border-box;
+    border: 1px solid #ccd0d5;
+    border-radius: 6px;
+}
+
+#ocrResult {
+    background: #f9fafb;
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px dashed #cdc;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+#status {
+    font-size: 18px;
+    font-weight: bold;
+    text-align: center;
 }
