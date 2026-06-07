@@ -30,8 +30,13 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             await page.render({ canvasContext: context, viewport: viewport }).promise;
 
             const textData = await page.getTextContent();
-            // 공백 제거 후 텍스트 조각들을 순서대로 정렬
-            const textItems = textData.items.map(item => item.str.trim()).filter(item => item !== "");
+            
+            // 💡 PDF 내부 텍스트 조각들을 순수 텍스트만 남기고 정제하여 배열로 만듭니다.
+            const textItems = textData.items.map(item => {
+                // 줄바꿈, 공백, 따옴표 등 노이즈 제거
+                return item.str.replace(/[\r\n\t"']/g, '').trim();
+            }).filter(item => item !== "");
+
             pdfTextContent = textItems.join(" ");
 
             // [5대 중요 항목 초기 변수]
@@ -39,35 +44,46 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             let orderItems = [];
             targetModels = [];
 
-            // 💡 [수정] 설치기사 이름 핀포인트 매칭
-            // PDF 텍스트 배열 전체를 돌며 '설치기사' 키워드를 찾은 후, 
-            // 바로 다음에 오는 유효한 이름(텍스트)을 정확히 매칭합니다.
+            // 💡 [완벽 해결] 기사님 이름 자동 추적 로직 (가변 대응)
+            // '설치기사' 텍스트 조각을 찾은 후, 그 직후에 등장하는 진짜 사람 이름(2~4자 한글)을 추출합니다.
             for (let i = 0; i < textItems.length; i++) {
-                if (textItems[i].includes("설치기사")) {
-                    // '설치기사' 단어 뒤에 오는 첫 번째 글자가 줄바꿈이나 노이즈일 수 있으므로 
-                    // 뒤로 최대 3칸까지 검사하여 '확인'이나 '고객명'이 포함되지 않은 진짜 기사 이름을 찾습니다.
-                    for (let j = i + 1; j <= i + 3; j++) {
-                        if (textItems[j] && textItems[j] !== "확인" && !textItems[j].includes("고객명") && !textItems[j].includes("최종")) {
-                            // 이름 뒤에 줄바꿈(\n)이 붙어 나오는 경우 제거
-                            technician = textItems[j].replace(/[\n\r]/g, '').trim();
-                            break;
+                if (textItems[i] === "설치기사") {
+                    // '설치기사' 단어 뒤로 최대 5칸까지 탐색
+                    for (let j = i + 1; j <= i + 5; j++) {
+                        if (textItems[j]) {
+                            const nameCandidate = textItems[j];
+                            
+                            // ❌ '확인', '고객명', '(성명)' 같은 시스템 단어는 패스합니다.
+                            if (nameCandidate === "확인" || 
+                                nameCandidate.includes("고객") || 
+                                nameCandidate.includes("최종") || 
+                                nameCandidate.includes("성명") ||
+                                nameCandidate.includes("주소")) {
+                                continue;
+                            }
+                            
+                            // 🔎 진짜 기사님 이름 조건: 보통 2자~4자 사이의 순수 한글 이름인 경우 확정
+                            if (/^[가-힣]{2,4}$/.test(nameCandidate)) {
+                                technician = nameCandidate;
+                                break;
+                            }
                         }
                     }
                     if (technician !== "미확인") break;
                 }
             }
 
-            // 💡 [수정] 표 내부 데이터 매칭 추출 (모델명, 수량, 원주문구분, 제품위치)
+            // 💡 [정밀 필터] 표 내부 데이터 매칭 추출 (자재 원천 차단 + 일반 주문만)
             for (let i = 0; i < textItems.length; i++) {
                 const item = textItems[i];
 
-                // 가전 완제품 모델명 패턴 분석
+                // 가전 완제품 모델명 패턴 분석 (영어 대문자 + 숫자 조합 형태)
                 if (/^[A-Z]{2,4}\d+[A-Z0-9-_.]+/i.test(item)) {
                     
                     const upperItem = item.toUpperCase();
 
-                    // ❌ [자재 원천 차단] P로 시작하는 모델명은 순수 자재이므로 품목 리스트에 절대 올리지 않습니다.
-                    // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 에어컨 가전이므로 통과시킵니다.
+                    // ❌ [자재 차단] P로 시작하는 모델명은 순수 자재이므로 완벽 배제
+                    // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 에어컨 완제품이므로 통과
                     if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
                         continue; 
                     }
@@ -76,24 +92,26 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                     let orderType = "미확인";
                     let location = "공란(미지정)";
 
-                    // 모델명 발견 지점 이후에서 행 데이터(수량, 원주문구분)를 추적
-                    for (let j = i + 1; j < Math.min(i + 12, textItems.length); j++) {
+                    // 모델명 발견 지점 이후 영역에서 수량과 원주문구분('일반')을 매칭
+                    for (let j = i + 1; j < Math.min(i + 15, textItems.length); j++) {
                         const nextItem = textItems[j];
 
                         if (nextItem === "일반" || nextItem === "특수") {
                             orderType = nextItem;
                             
-                            // 원주문구분("일반") 근처 칸에 위치한 수량(숫자) 매칭
+                            // '일반' 단어 주변 앞뒤에 위치한 진짜 수량(숫자) 수집
                             if (textItems[j-1] && /^\d+$/.test(textItems[j-1])) {
                                 quantity = textItems[j-1];
                             } else if (textItems[j-2] && /^\d+$/.test(textItems[j-2])) {
                                 quantity = textItems[j-2];
+                            } else if (textItems[j+1] && /^\d+$/.test(textItems[j+1])) {
+                                quantity = textItems[j+1];
                             }
                             break;
                         }
                     }
 
-                    // 💡 오직 원주문구분이 '일반'인 제품만 리스트에 등록합니다.
+                    // 💡 오직 원주문구분이 '일반'인 제품만 최종 목록에 등록
                     if (orderType === "일반") {
                         // 모델명 뒤의 유통 코드(.AKOR 등) 제거
                         let cleanModel = item.split('.')[0].trim().toUpperCase();
@@ -120,7 +138,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                 // 1순위 설치기사 상단 고정
                 let htmlContent = `
                     <li style="list-style:none; margin-bottom:15px; background:#e0e7ff; padding:10px; border-radius:6px; border-left:5px solid #4f46e5;">
-                        👷 <b>1. 설치기사 :</b> <span style="font-size:16px; color:#1e1b4b; font-weight:bold;">${technician}</span>
+                        👷 <b>1. 설치기사 :</b> <span style="font-size:16px; color:#1e1b4b; font-weight:bold;">${technician} 기사님</span>
                     </li>`;
                 
                 // 2~5순위 제품 상세 내역 렌더링
@@ -155,7 +173,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 });
 
 // ==========================================
-// 2. 사진 촬영 시 자동 글자 읽기 기능
+// 2. 사진 촬영 시 자동 글자 읽기 기능 (생략)
 // ==========================================
 document.getElementById("cameraInput").addEventListener("change", async function (e) {
     const photoFile = e.target.files[0];
