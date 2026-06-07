@@ -38,7 +38,6 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 
             pdfTextContent = textItems.join(" ");
 
-            // ❌ 설치기사(technician) 변수 및 관련 로직 완벽 제거
             let orderItems = [];
             targetModels = [];
 
@@ -103,10 +102,10 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             targetModels = [...new Set(targetModels)];
 
             // ==========================================
-            // 화면 최종 렌더링 (설치기사 영역 없음)
+            // 화면 최종 렌더링
             // ==========================================
             if (orderItems.length > 0) {
-                let htmlContent = ""; // ❌ 기사님 정보를 노출하던 상단 알림창 제거
+                let htmlContent = ""; 
                 
                 orderItems.forEach((prod, index) => {
                     htmlContent += `
@@ -138,7 +137,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 });
 
 // ==========================================
-// 2. 사진 촬영 시 자동 글자 읽기 기능 (OCR)
+// 2. 사진 촬영 시 자동 글자 읽기 기능 (100% 매칭 기준 검증)
 // ==========================================
 document.getElementById("cameraInput").addEventListener("change", async function (e) {
     const photoFile = e.target.files[0];
@@ -147,25 +146,43 @@ document.getElementById("cameraInput").addEventListener("change", async function
     const manualInput = document.getElementById("manualInput");
     const ocrResultDiv = document.getElementById("ocrResult");
     
+    // 분석 시작 시 초기화
     manualInput.value = "";
-    ocrResultDiv.innerText = "⏳ 스티커 일련번호 판독 중...";
+    ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 스티커 바코드 판독 중...</span>";
 
     try {
         const result = await Tesseract.recognize(photoFile, 'eng', {
             tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
         });
         
-        const detectedText = result.data.text.replace(/\s+/g, '').toUpperCase();
-        ocrResultDiv.innerText = "인식 완료! [검수] 버튼을 눌러주세요.";
+        // 인식된 문자열에서 모든 공백 및 줄바꿈을 제거하고 대문자로 통일
+        let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
+        
+        let isMatched = false;
+        let matchedModel = "";
 
+        // 💡 [기사님 요청 반영]: 의뢰서 모델명이 사진 판독 글자 안에 100% 정확히 녹아있는지 검사
         for (let model of targetModels) {
             if (detectedText.includes(model)) {
-                manualInput.value = model;
+                isMatched = true;
+                matchedModel = model;
                 break;
             }
         }
+
+        if (isMatched) {
+            // 100% 일치하는 모델명이 있을 때만 입력란에 값을 연동시킵니다.
+            manualInput.value = matchedModel;
+            ocrResultDiv.innerHTML = `<span style="color: green; font-weight: bold;">✅ 인식 성공 (${matchedModel})! [검수] 버튼을 누르세요.</span>`;
+        } else {
+            // 100% 일치하지 않으면 빈칸으로 두고 화면에 불일치 경고를 명시합니다.
+            manualInput.value = "";
+            ocrResultDiv.innerHTML = `<span style="color: red; font-weight: bold;">❌ 의뢰서와 모델명 불일치 (직접 입력 가능)</span>`;
+        }
+
     } catch (err) {
-        ocrResultDiv.innerText = "사진 인식 실패 (모델명 수동 입력 검수 가능)";
+        console.error(err);
+        ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (모델명 수동 입력 검수 가능)</span>";
     }
 });
 
@@ -178,19 +195,20 @@ document.getElementById("checkBtn").addEventListener("click", function () {
     const modelToCompare = manualInput.value.trim().toUpperCase();
 
     if (modelToCompare === "") {
-        alert("모델명을 입력하거나 사진을 등록하세요.");
+        alert("바코드 사진 인식이 불일치했거나 입력창이 비어있습니다. 모델명을 직접 확인 후 입력해 주세요.");
         return;
     }
 
-    // 자재 차단 안전장치 (PQ 차단으로 변경)
+    // 자재 차단 안전장치 (PQ 차단)
     if (modelToCompare.startsWith('PQ')) {
         alert("❌ PQ로 시작하는 코드는 자재 부품이므로 검수 대상이 아닙니다.");
         return;
     }
 
-    const isMatched = targetModels.includes(modelToCompare);
+    // 최종 확정 대조 (배열에 100% 존재하는지 한 번 더 체크)
+    const isFinalCheckPassed = targetModels.includes(modelToCompare);
 
-    if (isMatched) {
+    if (isFinalCheckPassed) {
         alert(`✅ 검수 성공!\n의뢰서 정보와 일치합니다: ${modelToCompare}`);
         statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">확인완료 1 / ${targetModels.length} (일치: ${modelToCompare})</span>`;
     } else {
