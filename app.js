@@ -38,7 +38,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
 
             pdfTextContent = textItems.join(" ");
 
-            // 핵심 중요 항목 변수 초기화 (설치기사 제외)
+            // 핵심 중요 항목 변수 초기화 (설치기사 관련 데이터 수집 안 함)
             let orderItems = [];
             targetModels = [];
 
@@ -51,7 +51,7 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
                     
                     const upperItem = item.toUpperCase();
 
-                    // ❌ [요청 반영] P로 시작하는 모델명은 순수 자재 부품이므로 품목 리스트에서 완벽 배제
+                    // ❌ [자재 차단] P로 시작하는 모델명은 순수 자재 부품이므로 품목 리스트에서 완벽 배제
                     // 단, PQ로 시작하는 모델명(예: PQ060907A01)은 실제 에어컨 완제품이므로 통과
                     if (upperItem.startsWith('P') && !upperItem.startsWith('PQ')) {
                         continue; 
@@ -101,12 +101,12 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             targetModels = [...new Set(targetModels)];
 
             // ==========================================
-            // 화면 업데이트 (설치기사 제외, 품목 중심 정렬)
+            // 화면 업데이트 (설치기사 UI 레이아웃까지 완전히 제거)
             // ==========================================
             if (orderItems.length > 0) {
-                let htmlContent = "";
+                let htmlContent = ""; // 상단에 기사님을 그리던 파란색 HTML 박스 영역을 완전히 삭제했습니다.
                 
-                // 지정된 중요도 순서대로 제품 상세 내역 렌더링
+                // 완제품 품목 중심으로 순서대로 매핑
                 orderItems.forEach((prod, index) => {
                     htmlContent += `
                         <li style="margin-bottom: 15px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px; list-style:none;">
@@ -123,44 +123,4 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             } else {
                 orderList.innerHTML = `
                     <li style="list-style:none; background:#f1f5f9; padding:15px; border-radius:6px; color:#475569;">
-                        ⚠️ 검수 대상 제품(원주문구분: 일반)이 없거나 순수 자재 코드만 존재하여 등록된 품목이 없습니다.
-                    </li>`;
-                document.getElementById("status").innerText = `확인완료 0 / 0`;
-            }
-
-        } catch (error) {
-            console.error(error);
-            orderList.innerHTML = "<li>설치의뢰서 양식 파싱 오류가 발생했습니다.</li>";
-        }
-    };
-    fileReader.readAsArrayBuffer(file);
-});
-
-// ==========================================
-// 2. 사진 촬영 시 자동 글자 읽기 기능
-// ==========================================
-document.getElementById("cameraInput").addEventListener("change", async function (e) {
-    const photoFile = e.target.files[0];
-    if (!photoFile) return;
-
-    const manualInput = document.getElementById("manualInput");
-    const ocrResultDiv = document.getElementById("ocrResult");
-    
-    manualInput.value = "";
-    ocrResultDiv.innerText = "⏳ 스티커 일련번호 판독 중...";
-
-    try {
-        const result = await Tesseract.recognize(photoFile, 'eng', {
-            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
-        });
-        
-        const detectedText = result.data.text.replace(/\s+/g, '').toUpperCase();
-        ocrResultDiv.innerText = "인식 완료! [검수] 버튼을 눌러주세요.";
-
-        for (let model of targetModels) {
-            if (detectedText.includes(model)) {
-                manualInput.value = model;
-                break;
-            }
-        }
-    }
+                        ⚠️ 검수 대상 제품(원주
