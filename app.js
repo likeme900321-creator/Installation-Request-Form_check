@@ -5,7 +5,7 @@ let pdfTextContent = "";
 let targetModels = [];   
 
 // ==========================================
-// 1. PDF 로드 및 정밀 행별 필터링 (잡다한 내용 차단)
+// 1. PDF 로드 및 중요도 기반 정밀 파싱
 // ==========================================
 document.getElementById("pdfFile").addEventListener("change", async function (e) {
     const file = e.target.files[0];
@@ -29,72 +29,105 @@ document.getElementById("pdfFile").addEventListener("change", async function (e)
             canvas.style.display = "block";
             await page.render({ canvasContext: context, viewport: viewport }).promise;
 
-            // PDF 내부 텍스트 추출
             const textData = await page.getTextContent();
-            
-            // 💡 텍스트 조각들을 하나의 문장으로 합치되, 구조 파악을 위해 공백 유지
-            pdfTextContent = textData.items.map(item => item.str).join(" ");
+            // 텍스트 조각들을 순서대로 배열화
+            const textItems = textData.items.map(item => item.str.trim());
+            pdfTextContent = textItems.join(" ");
 
-            // 💡 잡다한 단어를 걸러내기 위한 핵심 가전/에어컨 모델명 정규식 
-            // 예시: AF25B, FQ18, AR06, MD- 등 주로 사용되는 에어컨/가전 첫 글자 패턴 위주 매칭
-            // (현장 모델명들이 알파벳 대문자로 시작하고 뒤에 숫자가 붙는 구조를 타겟팅)
-            const modelPattern = /[A-Z]{1,4}\d{2,4}[A-Z0-9-_]+/g; 
-            
-            let extractedRawModels = [];
-            
-            // 💡 정밀 검사: 의뢰서 텍스트 조각들을 순회하며 '일반'과 '모델명'이 매칭되는지 분석
-            // 의뢰서에서 '일반'이라는 단어가 등장한 위치 근처에 있는 모델명들만 유효한 것으로 판단합니다.
-            const lines = pdfTextContent.split(/[\s]{2,}/); // 띄어쓰기가 길게 된 구간을 기준으로 쪼갬
-            
-            // 만약 양식이 줄바꿈 기반이라면 아래처럼 줄 단위로 판단 가능
-            // 여기서는 '일반'이라는 글자와 '모델명 패턴'이 동시에 만족하거나 인접한 경우를 수집합니다.
-            const allMatches = pdfTextContent.match(modelPattern) || [];
-            
-            // 중복 및 불필요 항목 원천 차단 필터링
-            targetModels = allMatches.filter(model => {
-                const cleanModel = model.trim();
-                
-                // 1. P로 시작하는 자재 부품인가? -> 탈락
-                if (cleanModel.startsWith('P') || cleanModel.startsWith('p')) return false;
-                
-                // 2. 숫자로만 이루어져 있거나 날짜/전화번호 형태인가? -> 탈락
-                if (/^\d+$/.test(cleanModel) || cleanModel.includes('-202')) return false;
-                
-                // 3. 모델명 길이가 너무 짧거나 단순 일련번호 형태인가? -> 탈락
-                if (cleanModel.length < 5) return false;
-                
-                return true;
-            });
+            // [중요 데이터 추출 변수]
+            let technician = "미확인";
+            let orderItems = [];
+            targetModels = [];
 
-            // 💡 최종 중복 제거
+            // 1단계: 설치기사 찾기 (중요도 1순위)
+            for (let i = 0; i < textItems.length; i++) {
+                if (textItems[i].includes("설치기사")) {
+                    if (textItems[i+1]) technician = textItems[i+1];
+                    break;
+                }
+            }
+
+            // 2~5단계: 표(Table) 내부 데이터 추출 (모델명, 수량, 제품위치, 원주문구분)
+            // '원주문구분'이 '일반'인 행만 필터링하여 수집합니다.
+            for (let i = 0; i < textItems.length; i++) {
+                const item = textItems[i];
+
+                // 에어컨/가전 모델명 형태 패턴 (PQ, SQ 등 대문자+숫자 조합)
+                if (/^[A-Z]{2,4}\d+[A-Z0-9-_]+/i.test(item)) {
+                    
+                    // 순수 자재 부품 코드 차단 (PQ는 통과, 그 외 P로 시작하는 자재는 제외)
+                    if (item.toUpperCase().startsWith('P') && !item.toUpperCase().startsWith('PQ')) {
+                        continue; 
+                    }
+
+                    // 모델명 기준으로 주변 데이터(수량, 제품위치, 원주문구분) 추적
+                    let quantity = "미확인";
+                    let location = "미지정";
+                    let orderType = "미확인";
+
+                    // 테이블 구조상 모델명 뒤에 수량(보통 숫자 1~2자리), 제품위치, 원주문구분이 순서대로 배치됨
+                    // 최대 6칸 뒤까지 탐색하여 정보를 매칭
+                    for (let j = i + 1; j < Math.min(i + 7, textItems.length); j++) {
+                        if (textItems[j] === "일반" || textItems[j] === "특수") {
+                            orderType = textItems[j];
+                            // '일반' 단어가 나온 위치 기준으로 앞뒤 수량 및 위치 재정렬 가능
+                            if (textItems[j-2] && /^\d+$/.test(textItems[j-2])) {
+                                quantity = textItems[j-2];
+                            }
+                            break;
+                        }
+                    }
+
+                    // 💡 조건: '원주문구분'이 '일반'인 제품만 주문품목 리스트에 추가
+                    if (orderType === "일반") {
+                        let cleanModel = item.split('.')[0].trim().toUpperCase(); // .AKOR 등 유통코드 제거
+                        targetModels.push(cleanModel);
+
+                        orderItems.push({
+                            model: cleanModel,
+                            qty: quantity,
+                            type: orderType,
+                            loc: location
+                        });
+                    }
+                }
+            }
+
+            // 중복 모델 제거
             targetModels = [...new Set(targetModels)];
 
-            // 💡 '일반' 원주문 구분 체크
-            const hasGeneralKeyword = pdfTextContent.includes("일반");
-
-            if (!hasGeneralKeyword) {
-                orderList.innerHTML = "<li>⚠️ '일반' 주문 구분이 확인되지 않습니다.</li>";
-                document.getElementById("status").innerText = `확인완료 0 / 0`;
-                targetModels = [];
-                return;
-            }
-
-            if (targetModels.length > 0) {
-                orderList.innerHTML = targetModels.map(m => `<li>📦 검수 대상 모델: <b>${m}</b></li>`).join("");
+            // [화면 표시 엘리먼트 업데이트]
+            if (orderItems.length > 0) {
+                let htmlContent = `<li style="list-style:none; margin-bottom:10px; background:#eef2f7; padding:8px; border-radius:5px;">👷 <b>설치기사:</b> ${technician}</li>`;
+                
+                orderItems.forEach((prod, index) => {
+                    htmlContent += `
+                        <li style="margin-bottom: 8px; border-bottom: 1px dashed #ddd; padding-bottom: 5px;">
+                            🔎 [품목 ${index + 1}]<br>
+                            • <b>모델명:</b> <span style="color:#4f46e5;">${prod.model}</span><br>
+                            • <b>수량:</b> ${prod.qty}개<br>
+                            • <b>원주문구분:</b> ${prod.type}<br>
+                            • <b>제품위치:</b> ${prod.loc}
+                        </li>`;
+                });
+                
+                orderList.innerHTML = htmlContent;
                 document.getElementById("status").innerText = `확인완료 0 / ${targetModels.length}`;
             } else {
-                orderList.innerHTML = "<li>의뢰서에서 '일반' 대상 모델명을 찾지 못했습니다.</li>";
+                orderList.innerHTML = `<li>👷 <b>설치기사:</b> ${technician}<br>⚠️ 검수 대상(원주문구분: 일반) 제품이 없습니다.</li>`;
                 document.getElementById("status").innerText = `확인완료 0 / 0`;
             }
+
         } catch (error) {
-            orderList.innerHTML = "<li>PDF 로드 오류가 발생했습니다.</li>";
+            console.error(error);
+            orderList.innerHTML = "<li>설치의뢰서 파싱 중 오류가 발생했습니다.</li>";
         }
     };
     fileReader.readAsArrayBuffer(file);
 });
 
 // ==========================================
-// 2. 사진 촬영 시 자동 글자 읽기 기능 (기존 속도 최적화 유지)
+// 2. 사진 촬영 시 자동 글자 읽기 기능 (대문자 통일)
 // ==========================================
 document.getElementById("cameraInput").addEventListener("change", async function (e) {
     const photoFile = e.target.files[0];
@@ -104,15 +137,15 @@ document.getElementById("cameraInput").addEventListener("change", async function
     const ocrResultDiv = document.getElementById("ocrResult");
     
     manualInput.value = "";
-    ocrResultDiv.innerText = "⏳ 사진 인식 중... (완료될 때까지 잠시 기다려주세요)";
+    ocrResultDiv.innerText = "⏳ 스티커 바코드 판독 중... (잠시만 기다려주세요)";
 
     try {
         const result = await Tesseract.recognize(photoFile, 'eng', {
             tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
         });
         
-        const detectedText = result.data.text.replace(/\s+/g, '');
-        ocrResultDiv.innerText = "인식 완료! 검수 버튼을 눌러주세요.";
+        const detectedText = result.data.text.replace(/\s+/g, '').toUpperCase();
+        ocrResultDiv.innerText = "인식 완료! [검수] 버튼을 눌러주세요.";
 
         for (let model of targetModels) {
             if (detectedText.includes(model)) {
@@ -121,35 +154,35 @@ document.getElementById("cameraInput").addEventListener("change", async function
             }
         }
     } catch (err) {
-        ocrResultDiv.innerText = "사진 인식 실패 (모델명 수동 입력 가능)";
+        ocrResultDiv.innerText = "사진 인식 실패 (모델명 수동 입력 검수 가능)";
     }
 });
 
 // ==========================================
-// 3. 검수 버튼 클릭 (즉시 비교 대조)
+// 3. 검수 버튼 클릭 (최종 매칭)
 // ==========================================
 document.getElementById("checkBtn").addEventListener("click", function () {
     const manualInput = document.getElementById("manualInput");
     const statusDiv = document.getElementById("status");
-    const modelToCompare = manualInput.value.trim();
+    const modelToCompare = manualInput.value.trim().toUpperCase();
 
     if (modelToCompare === "") {
         alert("인식되거나 입력된 모델명이 없습니다.");
         return;
     }
 
-    if (modelToCompare.startsWith('P') || modelToCompare.startsWith('p')) {
-        alert("❌ 자재(P로 시작)는 검수 대상이 아닙니다.");
+    if (modelToCompare.startsWith('P') && !modelToCompare.startsWith('PQ')) {
+        alert("❌ 자재 부품은 검수 대상이 아닙니다.");
         return;
     }
 
     const isMatched = targetModels.includes(modelToCompare);
 
     if (isMatched) {
-        alert(`✅ 검수 성공!\n일치하는 제품입니다: ${modelToCompare}`);
+        alert(`✅ 검수 성공!\n의뢰서 정보와 일치합니다: ${modelToCompare}`);
         statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">확인완료 1 / ${targetModels.length} (일치: ${modelToCompare})</span>`;
     } else {
-        alert(`❌ 검수 실패!\n주문 품목에 [${modelToCompare}] 제품이 없습니다.`);
+        alert(`❌ 검수 실패!\n검수 대상 품목에 [${modelToCompare}] 제품이 없거나 일반 주문이 아닙니다.`);
         statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">미일치 제품 발견</span>`;
     }
 });
