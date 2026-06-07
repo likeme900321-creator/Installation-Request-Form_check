@@ -8,7 +8,7 @@
         let currentPageTargetModels = []; 
         let currentRenderTask = null;
 
-        // [1] 파일 선택 시 최초 동작 구동
+        // [1] 파일 선택 시 최초 구동
         document.getElementById("pdfFile").addEventListener("change", function (e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -30,6 +30,7 @@
                     totalPdfPages = pdfDoc.numPages; 
                     currentPdfPage = 1; 
                     
+                    // 첫 페이지 연동 로드
                     await loadAndRenderPage(currentPdfPage);
 
                 } catch (error) {
@@ -40,11 +41,11 @@
             fileReader.readAsArrayBuffer(file);
         });
 
-        // [2] 🔄 딱 1페이지만 실시간 연동하여 표출하는 핵심 마스터 로직
+        // [2] 🔄 현재 페이지에 맞게 [이미지 + 기사명 + 주문품목]을 일괄 변경하는 마스터 함수
         async function loadAndRenderPage(pageNumber) {
             if (!pdfDoc) return;
 
-            // 새 페이지 열 때 입력창 및 결과창 깨끗하게 밀어버리기
+            // 1. 페이지가 바뀔 때마다 하단 입력창 및 결과 화면 깨끗하게 리셋
             document.getElementById("manualInput").value = "";
             document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>";
             document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
@@ -55,13 +56,13 @@
             const pageIndicator = document.getElementById("pageIndicator");
             const orderList = document.getElementById("orderList");
 
-            // 이전 페이지 그리던 작업이 덜 끝났다면 강제 취소해서 충돌 차단
+            // 연타 시 비동기 충돌 방지를 위해 이전 렌더링 강제 취소
             if (currentRenderTask) {
                 currentRenderTask.cancel();
                 currentRenderTask = null;
             }
 
-            // 캔버스 도화지 깨끗하게 밀어버리기
+            // 캔버스 메모리 비우기 및 초기화
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             canvas.width = 0;
             canvas.height = 0;
@@ -69,7 +70,7 @@
             try {
                 const page = await pdfDoc.getPage(pageNumber);
                 
-                // 모바일 최적화 선명도 비율 조절
+                // 모바일 가독성을 위해 1.5배 선명하게 드로잉
                 const viewport = page.getViewport({ scale: 1.5 });
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
@@ -83,30 +84,26 @@
                 await currentRenderTask.promise;
                 currentRenderTask = null; 
 
-                // 텍스트 추출 및 노이즈 기호 삭제
+                // 2. 텍스트 추출 및 기호 공백 정제
                 const textContent = await page.getTextContent();
-                
-                // 💡 [핵심 해결책] 쪼개진 단어들을 매칭하기 쉽게 전체 줄바꿈/기호를 다 지운 통짜 문자열로 병합
                 let fullText = textContent.items.map(item => item.str || "").join(" ");
-                // 정제: 큰따옴표, 따옴표 제거 및 공백 정렬
                 fullText = fullText.replace(/[\r\n\t"']/g, " ").trim();
 
-                // 🕵️‍♂️ 통짜 문자열에서 기사명 추출 (설치기사 문구 바로 뒤 단어 매칭)
+                // 🕵️‍♂️ 기사명 추출
                 let technicianName = "미지정";
                 const techMatch = fullText.match(/설치기사\s+([가-힣]{2,4})/);
                 if (techMatch && techMatch[1]) {
                     technicianName = techMatch[1];
                 }
 
-                // 🕵️‍♂️ 통짜 문자열에서 고객명 추출 (고객명 문구 바로 뒤 단어 매칭)
+                // 🕵️‍♂️ 고객명 추출
                 let customerName = "미확인";
                 const customerMatch = fullText.match(/고객명\s+([가-힣]{2,4})/);
                 if (customerMatch && customerMatch[1]) {
                     customerName = customerMatch[1];
                 }
 
-                // 📋 [품목 추출 대수술] 에어컨 모델명 정규식 패턴 자동 스캔 
-                // 조건: 영문 대문자와 숫자가 섞여있고 최소 6글자 이상인 단어 추출
+                // 📋 [패턴 수정 완료] 공백 기준 단어 배열 분할 추출 기법
                 const words = fullText.split(/\s+/);
                 let uniqueProducts = [];
                 let seenModels = new Set();
@@ -114,21 +111,17 @@
                 for (let word of words) {
                     let cleanWord = word.replace(/,/g, '').trim().toUpperCase();
                     
-                    // 에어컨 완제품 모델명 패턴 분석 (알파벳+숫자 혼합, 자재부품 PQ 제외, 길이 제한)
-                    if (/^[A-Z0-9.-]+$/.test(cleanWord) && cleanWord.length >= 6) {
-                        if (cleanWord.startsWith('PQ')) continue;           // 부품 제외
-                        if (/^\d+$/.test(cleanWord)) continue;               // 순수 숫자 제외
-                        if (cleanWord.includes('202606')) continue;         // 날짜 제외
-                        if (cleanWord.startsWith('010-')) continue;          // 전화번호 제외
-                        if (cleanWord.includes('112343')) continue;         // 주문서번호 패턴 제외
+                    // 💡 핵심 버그 해결: .AKOR를 포함하여 완제품 에어컨 양식(SQ, FQ 등)을 정확히 스캔
+                    if (cleanWord.includes('AKOR') || /^[A-Z]{2,4}\d{2,4}[A-Z0-9]+/.test(cleanWord)) {
+                        
+                        if (cleanWord.startsWith('PQ')) continue; // 자재/부품 코드 제외
+                        if (cleanWord.includes('202606')) continue; // 발행일 날짜 제외
 
-                        // 마침표나 확장자 찌꺼기가 붙어있다면 제거
+                        // 검수 대조를 간결하게 하기 위해 뒤에 붙은 .AKOR는 떼고 순수 모델명만 사용
                         let finalModel = cleanWord.split('.')[0].trim();
 
-                        if (!seenModels.has(finalModel)) {
+                        if (finalModel.length >= 5 && !seenModels.has(finalModel)) {
                             seenModels.add(finalModel);
-                            
-                            // 기본 수량은 우선 1개로 세팅 (수량 컬럼이 찢어져 있어서 완제품 모델명 자체를 타겟팅)
                             uniqueProducts.push({
                                 model: finalModel,
                                 qty: "1"
@@ -137,9 +130,20 @@
                     }
                 }
 
+                // 세트모델명(SQ07GJ1WES 등) 구역에 별도로 적힌 완제품이 있다면 추가로 수집
+                const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9]+)/);
+                if (setModelMatch && setModelMatch[1]) {
+                    let setModel = setModelMatch[1].split('.')[0].trim().toUpperCase();
+                    if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ')) {
+                        seenModels.add(setModel);
+                        uniqueProducts.push({ model: setModel, qty: "1" });
+                    }
+                }
+
+                // 현재 페이지 전용 스캔 대조군 배열 완성
                 currentPageTargetModels = uniqueProducts.map(p => p.model);
 
-                // 화면 우측/하단 UI 글씨 뿌리기
+                // 3. 우측 정보창 UI를 현재 페이지 내용으로 통째로 리렌더링
                 let htmlContent = `
                     <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                         👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -162,13 +166,16 @@
                         `;
                     });
                 }
+                
                 orderList.innerHTML = htmlContent;
+                
+                // 페이지 카운터 연동 (예: 1 / 5 장)
                 pageIndicator.innerText = `의뢰서 건수: ${pageNumber} / ${totalPdfPages} 장`;
                 document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (품목: ${currentPageTargetModels.length}개)</span>`;
 
             } catch (err) {
                 if (err.name === 'RenderingCancelledException') {
-                    console.log('이전 페이지 렌더링 정상 취소 완료');
+                    console.log('이전 페이지 작업 정상 취소');
                 } else {
                     console.error("페이지 로딩 실패:", err);
                     pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 중 에러 발생`;
@@ -176,7 +183,7 @@
             }
         }
 
-        // [3] 이전장 버튼 핸들러
+        // [3] 이전장 버튼 클릭시 자동 연동
         document.getElementById("prevPageBtn").addEventListener("click", async function () {
             if (!pdfDoc) return;
             if (currentPdfPage > 1) {
@@ -187,7 +194,7 @@
             }
         });
 
-        // [4] 다음장 버튼 핸들러
+        // [4] 다음장 버튼 클릭시 자동 연동
         document.getElementById("nextPageBtn").addEventListener("click", async function () {
             if (!pdfDoc) return;
             if (currentPdfPage < totalPdfPages) {
@@ -198,7 +205,7 @@
             }
         });
 
-        // [5] 스티커 바코드 인식 처리 기법
+        // [5] 사진 스캔 판독 (오직 현재 화면 품목과 크로스 체크)
         document.getElementById("cameraInput").addEventListener("change", async function (e) {
             const photoFile = e.target.files[0];
             if (!photoFile) return;
@@ -207,7 +214,7 @@
             const ocrResultDiv = document.getElementById("ocrResult");
             
             manualInput.value = "";
-            ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 켜진 페이지 정보와 비교 분석 중...</span>";
+            ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 페이지 정보와 대조 중...</span>";
 
             try {
                 const result = await Tesseract.recognize(photoFile, 'eng', {
@@ -240,7 +247,7 @@
             }
         });
 
-        // [6] 최종 검수 버튼 동작
+        // [6] 검수 확정 버튼
         document.getElementById("checkBtn").addEventListener("click", function () {
             const manualInput = document.getElementById("manualInput");
             const statusDiv = document.getElementById("status");
