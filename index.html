@@ -91,14 +91,21 @@
     let totalPdfPages = 0;      
     let currentPageTargetModels = []; 
     let currentRenderTask = null;
+    
+    // 대량 의뢰서 전수조사 후 기사별 페이지 위치를 저장할 맵데이터
+    let technicianPageMap = {}; 
 
-    // [1] 파일 선택 시 최초 구동
+    // [1] 파일 선택 시 최초 구동 및 전수조사
     document.getElementById("pdfFile").addEventListener("change", function (e) {
         const file = e.target.files[0];
         if (!file) return;
 
         const pageIndicator = document.getElementById("pageIndicator");
-        pageIndicator.innerText = "📄 대량 의뢰서 로딩 및 페이지 분할 중...";
+        pageIndicator.innerText = "📄 대량 의뢰서 분석 및 기사별 색인 생성 중...";
+        
+        // 검색창 초기화
+        document.getElementById("techSearchInput").value = "";
+        technicianPageMap = {};
 
         const fileReader = new FileReader();
         fileReader.onload = async function () {
@@ -114,17 +121,44 @@
                 totalPdfPages = pdfDoc.numPages; 
                 currentPdfPage = 1; 
                 
+                // 속도 향상을 위해 배경에서 전체 페이지의 기사명만 빠르게 선독형 색인 생성
+                for (let p = 1; p <= totalPdfPages; p++) {
+                    const page = await pdfDoc.getPage(p);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str || "").join(" ");
+                    
+                    const techMatch = pageText.match(/설치기사\s*([가-힣]{2,4})/i) || pageText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
+                    let tName = "미지정";
+                    if (techMatch && techMatch[1]) {
+                        tName = techMatch[1].trim();
+                    } else {
+                        let idx = pageText.indexOf("설치기사");
+                        if (idx !== -1) {
+                            let sub = pageText.substring(idx, idx + 30);
+                            let nm = sub.match(/([가-힣]{2,4})/g);
+                            if (nm && nm[1]) tName = nm[1];
+                        }
+                    }
+                    
+                    if (tName !== "미지정") {
+                        if (!technicianPageMap[tName]) {
+                            technicianPageMap[tName] = [];
+                        }
+                        technicianPageMap[tName].push(p); // 기사별 해당 페이지 번호 등록
+                    }
+                }
+                
                 await loadAndRenderPage(currentPdfPage);
 
             } catch (error) {
                 console.error("PDF 초기 로드 에러:", error);
-                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 완전히 새로고침 해보세요.");
+                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 새로고침 해보세요.");
             }
         };
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (지정 블랙리스트 완벽 차단 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -158,12 +192,11 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 전처리
             const textContent = await page.getTextContent();
             let fullText = textContent.items.map(item => item.str || "").join(" ");
             fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
 
-            // 🕵️‍♂️ 기사명 정밀 추출
+            // 기사명 추출
             let technicianName = "미지정";
             const techMatch = fullText.match(/설치기사\s*([가-힣]{2,4})/i) || fullText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
             if (techMatch && techMatch[1]) {
@@ -177,7 +210,7 @@
                 }
             }
 
-            // 🕵️‍♂️ 고객명 정밀 추출
+            // 고객명 추출
             let customerName = "미확인";
             const customerMatch = fullText.match(/고객명\s*([가-힣]{2,4})/i) || fullText.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
             if (customerMatch && customerMatch[1] && !["연락처", "설치", "협력"].includes(customerMatch[1])) {
@@ -194,7 +227,6 @@
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            // 일반적인 완제품 모델명 추출 패턴
             const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
             const matchedWords = fullText.match(airconPattern) || [];
 
@@ -202,18 +234,12 @@
                 let cleanWord = word.replace(/,/g, '').trim();
                 let finalModel = cleanWord.split('.')[0].trim();
 
-                // 날짜(2026), 자재부품(PQ) 코드는 원천 제외
                 if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
 
-                // 🎯 [무적의 블랙리스트 필터]
-                // PDF 내부 유령 데이터에 숨겨져 있는 세트모델명(기사님 의뢰서 기준)들을 완벽하게 저격 차단합니다.
-                // 끝이 '2' 또는 '1'로 끝나는 세트 코드 형태나 특정 유령 이름들을 무조건 탈락시킵니다.
-                if (finalModel === "FQ20VDWHM2" || finalModel === "FQ17GU2ED2" || finalModel.endsWith("M2") || finalModel.endsWith("D2")) {
+                // 철벽 블랙리스트 필터 유지
+                if (finalModel === "FQ20VDWHM2" || finalModel === "FQ17GU2ED2" || finalModel.endsWith("M2") || finalModel.endsWith("D2") || /.*\d$/.test(finalModel)) {
                     continue; 
                 }
-
-                // 한번 더 확실하게 끝자리가 숫자이면 세트명이므로 제외
-                if (/.*\d$/.test(finalModel)) continue;
 
                 if (!seenModels.has(finalModel)) {
                     seenModels.add(finalModel);
@@ -223,7 +249,6 @@
 
             currentPageTargetModels = uniqueProducts.map(p => p.model);
 
-            // 화면 UI 렌더링
             let htmlContent = `
                 <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                     👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -253,7 +278,7 @@
 
         } catch (err) {
             if (err.name === 'RenderingCancelledException') {
-                console.log('이전 작업 정상 취소');
+                console.log('이전 작업 취소됨');
             } else {
                 console.error("동기화 실패:", err);
                 pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 중 에러 발생`;
@@ -261,9 +286,52 @@
         }
     }
 
+    // 🎯 [신규 추가] 기사명 실시간 필터 검색 기능
+    document.getElementById("techSearchInput").addEventListener("input", async function (e) {
+        let query = e.target.value.trim();
+        if (!pdfDoc || query === "") return;
+
+        // 검색어와 일치하는 기사님 검색 (부분 매칭 지원)
+        let matchedKey = Object.keys(technicianPageMap).find(name => name.includes(query));
+        
+        if (matchedKey && technicianPageMap[matchedKey].length > 0) {
+            // 해당 기사님이 배정된 첫 번째 페이지번호를 가져와 화면 이동
+            let targetPage = technicianPageMap[matchedKey][0];
+            currentPdfPage = targetPage;
+            await loadAndRenderPage(currentPdfPage);
+        }
+    });
+
+    // 🎯 [신규 추가] 전체보기 버튼 클릭 시 필터 해제
+    document.getElementById("clearSearchBtn").addEventListener("click", async function() {
+        document.getElementById("techSearchInput").value = "";
+        if (pdfDoc) {
+            currentPdfPage = 1;
+            await loadAndRenderPage(currentPdfPage);
+        }
+    });
+
     // [3] 이전장 버튼
     document.getElementById("prevPageBtn").addEventListener("click", async function () {
         if (!pdfDoc) return;
+        
+        let query = document.getElementById("techSearchInput").value.trim();
+        if (query !== "") {
+            // 특정 기사 필터링 상태일 때는 해당 기사님의 이전 페이지로 이동
+            let matchedKey = Object.keys(technicianPageMap).find(name => name.includes(query));
+            if (matchedKey) {
+                let pages = technicianPageMap[matchedKey];
+                let prevPages = pages.filter(p => p < currentPdfPage);
+                if (prevPages.length > 0) {
+                    currentPdfPage = prevPages[prevPages.length - 1];
+                    await loadAndRenderPage(currentPdfPage);
+                    return;
+                }
+            }
+            alert("해당 기사님의 첫 번째 의뢰서 페이지입니다.");
+            return;
+        }
+
         if (currentPdfPage > 1) {
             currentPdfPage--;
             await loadAndRenderPage(currentPdfPage);
@@ -275,6 +343,24 @@
     // [4] 다음장 버튼
     document.getElementById("nextPageBtn").addEventListener("click", async function () {
         if (!pdfDoc) return;
+
+        let query = document.getElementById("techSearchInput").value.trim();
+        if (query !== "") {
+            // 특정 기사 필터링 상태일 때는 해당 기사님의 다음 페이지로 이동
+            let matchedKey = Object.keys(technicianPageMap).find(name => name.includes(query));
+            if (matchedKey) {
+                let pages = technicianPageMap[matchedKey];
+                let nextPages = pages.filter(p => p > currentPdfPage);
+                if (nextPages.length > 0) {
+                    currentPdfPage = nextPages[0];
+                    await loadAndRenderPage(currentPdfPage);
+                    return;
+                }
+            }
+            alert("해당 기사님의 마지막 의뢰서 페이지입니다.");
+            return;
+        }
+
         if (currentPdfPage < totalPdfPages) {
             currentPdfPage++;
             await loadAndRenderPage(currentPdfPage);
