@@ -33,7 +33,7 @@
 
     <div class="card" style="background: #edf2f7; border-color: #cbd5e1; display: flex; gap: 8px; align-items: center;">
         <label for="techSearchInput" style="font-size: 14px; font-weight: bold; color: #2d3748; white-space: nowrap;">👷 기사명 검색:</label>
-        <input type="text" id="techSearchInput" placeholder="기사님 이름 입력 (예: 강정환)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
+        <input type="text" id="techSearchInput" placeholder="기사님 이름 입력 (예: 홍길동)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
         <button id="clearSearchBtn" style="padding: 8px 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">전체보기</button>
     </div>
 
@@ -50,7 +50,7 @@
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
-        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 사진 매칭</label>
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 모델명 사진 매칭</label>
         <input type="file" id="cameraInput" accept="image/*" capture="environment" class="btn btn-secondary" style="padding: 8px;">
         <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">
             스캔 대기 중...
@@ -59,7 +59,7 @@
 
     <div class="card" style="border-left: 5px solid #16a34a;">
         <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #15803d;">🔍 2단계: 수동 확인 및 확정</label>
-        <input type="text" id="manualInput" placeholder="바코드가 안 찍힐 때 모델명 직접 입력 가능" style="width:95%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 8px; font-size: 14px;">
+        <input type="text" id="manualInput" placeholder="모델명이 안 찍힐 때 모델명 직접 입력 가능" style="width:95%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 8px; font-size: 14px;">
         <button id="checkBtn" class="btn btn-success">✅ 상차 자재 검수 확정</button>
         <div id="status" style="margin-top: 10px; text-align: center; font-size: 15px;"></div>
     </div>
@@ -148,7 +148,7 @@
         if (!pdfDoc) return;
 
         document.getElementById("manualInput").value = "";
-        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>";
+        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 모델명 사진을 촬영해 주세요.</span>";
         document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
         currentPageTargetModels = []; 
 
