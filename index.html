@@ -118,13 +118,13 @@
 
             } catch (error) {
                 console.error("PDF 초기 로드 에러:", error);
-                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 캐시를 깨고 다시 해보세요.");
+                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 껐다 켜보세요.");
             }
         };
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (텍스트 꼬임 및 세트 모델 완전 방어 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (단품 전용 철벽 필터 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -153,66 +153,59 @@
             canvas.height = viewport.height;
             canvas.width = viewport.width;
 
-            const renderContext = {
-                canvasContext: ctx,
-                viewport: viewport
-            };
-            
+            const renderContext = { canvasContext: ctx, viewport: viewport };
             currentRenderTask = page.render(renderContext);
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 특수기호 청소
+            // 텍스트 추출 및 전처리
             const textContent = await page.getTextContent();
-            let fullText = textContent.items.map(item => item.str || "").join(" ");
-            fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
+            let rawText = textContent.items.map(item => item.str || "").join(" ");
+            // 연속된 공백 청소 및 대문자화
+            let fullText = rawText.replace(/\s+/g, " ").trim().toUpperCase();
 
-            // 🕵️‍♂️ 기사명 정밀 추출 (텍스트 꼬임 보정)
+            // 🕵️‍♂️ [보안 패치 1] 담당 설치기사명 정밀 추출
             let technicianName = "미지정";
             const techMatch = fullText.match(/설치기사\s*([가-힣]{2,4})/i) || fullText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
             if (techMatch && techMatch[1]) {
-                technicianName = techMatch[1];
+                technicianName = techMatch[1].trim();
             } else {
-                // 3차 예비 탐색: 패턴이 꼬였을 경우 강정환 기사님 이름을 텍스트 전체에서 직접 강제 검색
-                const directTechMatch = fullText.match(/(강정환|김기사|이기사)/); 
-                if (directTechMatch) technicianName = directTechMatch[0];
+                // 한 줄 꼬임 방지 서브 검색
+                let techIdx = fullText.indexOf("설치기사");
+                if (techIdx !== -1) {
+                    let subStr = fullText.substring(techIdx, techIdx + 20);
+                    let nameMatch = subStr.match(/([가-힣]{2,4})/g);
+                    if (nameMatch && nameMatch[1]) technicianName = nameMatch[1];
+                }
             }
 
-            // 🕵️‍♂️ 고객명 정밀 추출
+            // 🕵️‍♂️ [보안 패치 2] 고객명 정밀 추출
             let customerName = "미확인";
             const customerMatch = fullText.match(/고객명\s*([가-힣]{2,4})/i) || fullText.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
-            if (customerMatch && customerMatch[1] && customerMatch[1] !== "연락처") {
-                customerName = customerMatch[1];
+            if (customerMatch && customerMatch[1] && !["연락처", "설치"].includes(customerMatch[1])) {
+                customerName = customerMatch[1].trim();
             } else {
-                const directCustMatch = fullText.match(/(백종열)/);
-                if (directCustMatch) customerName = directCustMatch[0];
+                let custIdx = fullText.indexOf("고객명");
+                if (custIdx !== -1) {
+                    let subStr = fullText.substring(custIdx, custIdx + 20);
+                    let nameMatch = subStr.match(/([가-힣]{2,4})/g);
+                    if (nameMatch && nameMatch[1] && nameMatch[1] !== "연락처") customerName = nameMatch[1];
+                }
             }
 
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            // 진짜 에어컨 완제품 모델명 패턴 매칭 (영문 2~4자 + 숫자 구조)
-            const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
-            const matchedWords = fullText.match(airconPattern) || [];
+            // 🕵️‍♂️ [보안 패치 3] 에어컨 진짜 단품 모델명 매칭 정규식
+            // .AKOR 앞부분이 정확히 N, U, J 로 끝나는 텍스트 패턴만 수집
+            const matchedWords = fullText.match(/[A-Z]{2,4}\d{2,4}[A-Z0-9-]*[NUJ]\.AKOR/g) || [];
 
             for (let word of matchedWords) {
-                let cleanWord = word.replace(/,/g, '').trim();
+                // .AKOR 앞의 순수 모델명만 추출 (예: FQ20VDWHAN)
+                let finalModel = word.split('.')[0].trim();
 
-                // 1차 기본 필터
-                if (cleanWord.includes('2026')) continue;
-                if (cleanWord.startsWith('PQ')) continue; // 부품자재 패스
-
-                // 마침표 뒤 국가코드(.AKOR 등) 제거
-                let finalModel = cleanWord.split('.')[0].trim();
-
-                // 기본 예외 필터
-                if (finalModel === '2026' || /^\d+$/.test(finalModel) || finalModel.length < 5) continue;
-
-                // ⭐ [세트모델 유령 차단 핵심 로직] 
-                // LG 에어컨 세트 모델명은 보통 FQ20VDWHM2처럼 맨 끝이 숫자로 끝납니다. 
-                // 실물로 나가는 실내기/실외기 단품 자재는 FQ20VDWHAN, SQ06BDAWBJ처럼 '알파벳(N, U, J)'으로 끝나므로,
-                // 맨 마지막 글자가 숫자인 단어는 세트명으로 판단해 리스트에서 원천 제외시킵니다.
-                if (/.*\d$/.test(finalModel)) continue; 
+                // 날짜 오독 및 5자 미만 찌꺼기 차단
+                if (finalModel.includes('2026') || finalModel.length < 5) continue;
 
                 if (!seenModels.has(finalModel)) {
                     seenModels.add(finalModel);
@@ -222,7 +215,7 @@
 
             currentPageTargetModels = uniqueProducts.map(p => p.model);
 
-            // 화면 UI 렌더링
+            // 화면 UI 출력 구성
             let htmlContent = `
                 <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                     👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -234,7 +227,7 @@
             `;
 
             if (uniqueProducts.length === 0) {
-                htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정된 일반 완제품 품목이 없습니다.</div>`;
+                htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정된 일반 완제품 단품 품목이 없습니다.</div>`;
             } else {
                 uniqueProducts.forEach((prod, idx) => {
                     htmlContent += `
@@ -252,7 +245,7 @@
 
         } catch (err) {
             if (err.name === 'RenderingCancelledException') {
-                console.log('이전 작업 정상 취소');
+                console.log('이전 렌더링 작업 정상 취소');
             } else {
                 console.error("동기화 실패:", err);
                 pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 중 에러 발생`;
