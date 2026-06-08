@@ -118,13 +118,13 @@
 
             } catch (error) {
                 console.error("PDF 초기 로드 에러:", error);
-                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 주소창에 ?v=2 등을 붙여 캐시를 깨고 다시 해보세요.");
+                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 캐시를 깨고 다시 해보세요.");
             }
         };
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지에 맞게 [이미지 + 기사명 + 주문품목]을 일괄 동기화하는 마스터 함수
+    // [2] 🔄 현재 페이지 동기화 마스터 함수
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -162,7 +162,7 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 공백 병합 기법
+            // 텍스트 추출 및 공백 병합
             const textContent = await page.getTextContent();
             let fullText = textContent.items.map(item => item.str || "").join(" ");
             fullText = fullText.replace(/[\r\n\t"']/g, " ").trim();
@@ -181,7 +181,7 @@
                 customerName = customerMatch[1];
             }
 
-            // 완제품 에어컨 패턴 정밀 분석 (.AKOR 대응)
+            // 완제품 에어컨 패턴 정밀 분석 (2026 날짜 필터링 추가)
             const words = fullText.split(/\s+/);
             let uniqueProducts = [];
             let seenModels = new Set();
@@ -189,9 +189,11 @@
             for (let word of words) {
                 let cleanWord = word.replace(/,/g, '').trim().toUpperCase();
                 
+                // ⭐ 2026이 포함된 단어는 연도/날짜이므로 무조건 제외 처리
+                if (cleanWord.includes('2026')) continue; 
+                
                 if (cleanWord.includes('AKOR') || /^[A-Z]{2,4}\d{2,4}[A-Z0-9]+/.test(cleanWord)) {
                     if (cleanWord.startsWith('PQ')) continue; 
-                    if (cleanWord.includes('202606')) continue; 
 
                     let finalModel = cleanWord.split('.')[0].trim();
 
@@ -205,7 +207,7 @@
             const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9]+)/);
             if (setModelMatch && setModelMatch[1]) {
                 let setModel = setModelMatch[1].split('.')[0].trim().toUpperCase();
-                if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ')) {
+                if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ') && !setModel.includes('2026')) {
                     seenModels.add(setModel);
                     uniqueProducts.push({ model: setModel, qty: "1" });
                 }
@@ -213,7 +215,7 @@
 
             currentPageTargetModels = uniqueProducts.map(p => p.model);
 
-            // 화면에 현재 페이지 전용 UI 갱신 생성
+            // 화면 UI 렌더링
             let htmlContent = `
                 <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                     👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -251,7 +253,7 @@
         }
     }
 
-    // [3] 이전장 연동 버튼
+    // [3] 이전장 버튼
     document.getElementById("prevPageBtn").addEventListener("click", async function () {
         if (!pdfDoc) return;
         if (currentPdfPage > 1) {
@@ -262,7 +264,7 @@
         }
     });
 
-    // [4] 다음장 연동 버튼
+    // [4] 다음장 버튼
     document.getElementById("nextPageBtn").addEventListener("click", async function () {
         if (!pdfDoc) return;
         if (currentPdfPage < totalPdfPages) {
@@ -273,7 +275,7 @@
         }
     });
 
-    // [5] 사진 스캔 판독 대조
+    // [5] 사진 스캔 판독
     document.getElementById("cameraInput").addEventListener("change", async function (e) {
         const photoFile = e.target.files[0];
         if (!photoFile) return;
@@ -287,6 +289,7 @@
         try {
             const result = await Tesseract.recognize(photoFile, 'eng', {
                 tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+                corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/tesseract-core.wasm.js'
             });
             
             let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
@@ -315,7 +318,7 @@
         }
     });
 
-    // [6] 최종 검수 확정 완료 처리
+    // [6] 최종 검수 확정
     document.getElementById("checkBtn").addEventListener("click", function () {
         const manualInput = document.getElementById("manualInput");
         const statusDiv = document.getElementById("status");
