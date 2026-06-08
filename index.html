@@ -124,7 +124,7 @@
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (정밀 타겟팅 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -162,10 +162,10 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 공백 병합
+            // 텍스트 추출 및 특수기호 청소
             const textContent = await page.getTextContent();
             let fullText = textContent.items.map(item => item.str || "").join(" ");
-            fullText = fullText.replace(/[\r\n\t"']/g, " ").trim();
+            fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
 
             // 기사명 추출
             let technicianName = "미지정";
@@ -181,32 +181,34 @@
                 customerName = customerMatch[1];
             }
 
-            // 완제품 에어컨 패턴 정밀 분석 (2026 날짜 필터링 추가)
-            const words = fullText.split(/\s+/);
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            for (let word of words) {
-                let cleanWord = word.replace(/,/g, '').trim().toUpperCase();
-                
-                // ⭐ 2026이 포함된 단어는 연도/날짜이므로 무조건 제외 처리
-                if (cleanWord.includes('2026')) continue; 
-                
-                if (cleanWord.includes('AKOR') || /^[A-Z]{2,4}\d{2,4}[A-Z0-9]+/.test(cleanWord)) {
-                    if (cleanWord.startsWith('PQ')) continue; 
+            // 🎯 [핵심 수술] 진짜 에어컨 완제품 모델명만 콕 집어내는 정규식 필터
+            // 규칙: 반드시 영문 대문자 2~4글자로 시작하고 바로 숫자가 이어지는 단어만 추출 (예: FQ24..., SQ07...)
+            const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
+            const matchedWords = fullText.match(airconPattern) || [];
 
-                    let finalModel = cleanWord.split('.')[0].trim();
+            for (let word of matchedWords) {
+                let cleanWord = word.replace(/,/g, '').trim();
 
-                    if (finalModel.length >= 5 && !seenModels.has(finalModel)) {
-                        seenModels.add(finalModel);
-                        uniqueProducts.push({ model: finalModel, qty: "1" });
-                    }
+                // 날짜(2026), 자재부품(PQ) 코드는 원천 제외
+                if (cleanWord.includes('2026')) continue;
+                if (cleanWord.startsWith('PQ')) continue;
+
+                // 뒤에 붙은 국가코드(.AKOR 등) 찌꺼기 제거
+                let finalModel = cleanWord.split('.')[0].trim();
+
+                if (finalModel.length >= 5 && !seenModels.has(finalModel)) {
+                    seenModels.add(finalModel);
+                    uniqueProducts.push({ model: finalModel, qty: "1" });
                 }
             }
 
+            // 세트모델명 구역 추가 수집
             const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9]+)/);
             if (setModelMatch && setModelMatch[1]) {
-                let setModel = setModelMatch[1].split('.')[0].trim().toUpperCase();
+                let setModel = setModelMatch[1].split('.')[0].trim();
                 if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ') && !setModel.includes('2026')) {
                     seenModels.add(setModel);
                     uniqueProducts.push({ model: setModel, qty: "1" });
@@ -233,7 +235,7 @@
                     htmlContent += `
                         <div style="margin-bottom: 8px; border:1px solid #e2e8f0; padding:10px; border-radius:6px; background:white;">
                             • <b>모델 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
-                            <span style="float:right; color:#1e293b; font-weight:bold;">${prod.qty} 개</span>
+                            <span style="float:right; color:#1e293b; font-weight:bold;">1 개</span>
                         </div>
                     `;
                 });
@@ -340,6 +342,6 @@
         }
     });
 </script>
-
+    
 </body>
 </html>
