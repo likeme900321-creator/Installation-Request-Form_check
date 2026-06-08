@@ -124,7 +124,7 @@
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (정밀 타겟팅 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (2026 이중 차단 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -184,32 +184,34 @@
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            // 🎯 [핵심 수술] 진짜 에어컨 완제품 모델명만 콕 집어내는 정규식 필터
-            // 규칙: 반드시 영문 대문자 2~4글자로 시작하고 바로 숫자가 이어지는 단어만 추출 (예: FQ24..., SQ07...)
+            // 진짜 에어컨 완제품 모델명 패턴 매칭 (영문 2~4자 + 숫자 구조)
             const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
             const matchedWords = fullText.match(airconPattern) || [];
 
             for (let word of matchedWords) {
                 let cleanWord = word.replace(/,/g, '').trim();
 
-                // 날짜(2026), 자재부품(PQ) 코드는 원천 제외
+                // 1차 필터: 단어 자체에 날짜나 자재 코드가 포함되면 탈락
                 if (cleanWord.includes('2026')) continue;
                 if (cleanWord.startsWith('PQ')) continue;
 
-                // 뒤에 붙은 국가코드(.AKOR 등) 찌꺼기 제거
+                // 마침표 뒤 국가코드 제거
                 let finalModel = cleanWord.split('.')[0].trim();
 
-                if (finalModel.length >= 5 && !seenModels.has(finalModel)) {
+                // ⭐ 2차 이중 필터: 최종 정제된 글자가 '2026'이거나 순수 숫자인 경우 완전히 제외
+                if (finalModel === '2026' || /^\d+$/.test(finalModel) || finalModel.length < 5) continue;
+
+                if (!seenModels.has(finalModel)) {
                     seenModels.add(finalModel);
                     uniqueProducts.push({ model: finalModel, qty: "1" });
                 }
             }
 
-            // 세트모델명 구역 추가 수집
-            const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9]+)/);
+            // 세트모델명 구역 수집 및 검증
+            const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9.]+)/);
             if (setModelMatch && setModelMatch[1]) {
                 let setModel = setModelMatch[1].split('.')[0].trim();
-                if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ') && !setModel.includes('2026')) {
+                if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ') && !setModel.includes('2026') && !/^\d+$/.test(setModel) && setModel.length >= 5) {
                     seenModels.add(setModel);
                     uniqueProducts.push({ model: setModel, qty: "1" });
                 }
