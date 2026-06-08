@@ -33,7 +33,7 @@
 
     <div class="card" style="background: #edf2f7; border-color: #cbd5e1; display: flex; gap: 8px; align-items: center;">
         <label for="techSearchInput" style="font-size: 14px; font-weight: bold; color: #2d3748; white-space: nowrap;">👷 기사명 검색:</label>
-        <input type="text" id="techSearchInput" placeholder="이름 입력 후 검색 버튼 터치" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
+        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력 (예: 강정환)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
         <button id="searchBtn" style="padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">검색</button>
         <button id="clearSearchBtn" style="padding: 8px 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">전체</button>
     </div>
@@ -51,7 +51,7 @@
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
-        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 모델명 사진 매칭</label>
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 사진 매칭</label>
         <input type="file" id="cameraInput" accept="image/*" capture="environment" class="btn btn-secondary" style="padding: 8px;">
         <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">스캔 대기 중...</div>
     </div>
@@ -100,7 +100,6 @@
                 totalPdfPages = pdfDoc.numPages; 
                 currentPdfPage = 1; 
                 
-                // 로드 완료되면 즉시 1페이지 그리기 진입
                 await loadAndRenderPage(currentPdfPage);
 
             } catch (error) {
@@ -111,13 +110,12 @@
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 화면 및 도면 강제 리렌더링 마스터 코어 함수
+    // [2] 🔄 화면 및 도면 강제 리렌더링 코어 함수
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
-        // UI 상태값 즉시 초기화
         document.getElementById("manualInput").value = "";
-        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 모델명 사진을 촬영해 주세요.</span>";
+        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>";
         document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
         currentPageTargetModels = []; 
 
@@ -126,18 +124,15 @@
         const pageIndicator = document.getElementById("pageIndicator");
         const orderList = document.getElementById("orderList");
 
-        // ⚡ [중요] 기존에 활성화된 렌더링 작업 강제 전면 취소 (기존 도면 꼬임 방지)
         if (currentRenderTask) {
             try { currentRenderTask.cancel(); } catch(c){}
             currentRenderTask = null;
         }
 
-        // 도화지 면적 싹 밀어버리기
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         try {
             const page = await pdfDoc.getPage(pageNumber);
-            // 모바일 화면 가독성을 위해 적정 배율 조정
             const viewport = page.getViewport({ scale: 1.2 });
             canvas.height = viewport.height;
             canvas.width = viewport.width;
@@ -147,37 +142,57 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 기사명 분석 시작
+            // 텍스트 추출 및 불순물 제거 (단어 간 공백은 유지)
             const textContent = await page.getTextContent();
-            let fullText = textContent.items.map(item => item.str || "").join(" ");
-            fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
+            let pageText = textContent.items.map(item => item.str || "").join(" ");
+            
+            // 줄바꿈, 탭, 따옴표, 쉼표 등의 유령 특수문자 전면 소독
+            pageText = pageText.replace(/[\r\n\t,`"'’“]|\s+/g, " ").trim();
 
-            // 기사명 파싱 규칙 보강
+            // 🎯 [버그 전면 수정] 정밀 정규식 기반 기사명 독립 추출
             let technicianName = "미지정";
-            const techMatch = fullText.match(/설치기사\s*([가-힣]{2,4})/i) || fullText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
-            if (techMatch && techMatch[1]) {
+            // "설치기사 강정환" 또는 "설치기사 이의진" 형태를 공백 단위로 안전하게 낚아챕니다.
+            let techMatch = pageText.match(/설치기사\s+([가-힣]{2,4})/i) || pageText.match(/설치기사([가-힣]{2,4})/i);
+            if (techMatch && techMatch[1] && techMatch[1] !== "고객명") {
                 technicianName = techMatch[1].trim();
             } else {
-                let techIdx = fullText.indexOf("설치기사");
-                if (techIdx !== -1) {
-                    let subStr = fullText.substring(techIdx, techIdx + 30);
-                    let nameMatch = subStr.match(/([가-힣]{2,4})/g);
-                    if (nameMatch && nameMatch[1]) technicianName = nameMatch[1];
+                // 예외 케이스 백업 필터
+                let idx = pageText.indexOf("설치기사");
+                if (idx !== -1) {
+                    let sub = pageText.substring(idx, idx + 40);
+                    let names = sub.match(/([가-힣]{2,4})/g);
+                    if (names) {
+                        // "고객명"이나 "설치기사"라는 단어 자체를 제외한 진짜 이름을 선택
+                        let realName = names.find(n => !["설치기사", "고객명", "연락처", "협력"].includes(n));
+                        if (realName) technicianName = realName;
+                    }
                 }
             }
 
-            // 고객명 파싱
+            // 🎯 [버그 전면 수정] 정밀 정규식 기반 고객명 독립 추출
             let customerName = "미확인";
-            const customerMatch = fullText.match(/고객명\s*([가-힣]{2,4})/i) || fullText.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
-            if (customerMatch && customerMatch[1] && !["연락처", "설치", "협력"].includes(customerMatch[1])) {
-                customerName = customerMatch[1].trim();
+            let custMatch = pageText.match(/고객명\s+([가-힣]{2,4})/i) || pageText.match(/고객명([가-힣]{2,4})/i);
+            if (custMatch && custMatch[1]) {
+                customerName = custMatch[1].trim();
+            } else {
+                let idx = pageText.indexOf("고객명");
+                if (idx !== -1) {
+                    let sub = pageText.substring(idx, idx + 30);
+                    let names = sub.match(/([가-힣]{2,4})/g);
+                    if (names) {
+                        let realCust = names.find(n => !["고객명", "연락처", "전화", "설치"].includes(n));
+                        if (realCust) customerName = realCust;
+                    }
+                }
             }
 
+            // 자재 모델명 추출 구역
             let uniqueProducts = [];
             let seenModels = new Set();
 
+            const upperRawText = pageText.toUpperCase();
             const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
-            const matchedWords = fullText.match(airconPattern) || [];
+            const matchedWords = upperRawText.match(airconPattern) || [];
 
             for (let word of matchedWords) {
                 let cleanWord = word.replace(/,/g, '').trim();
@@ -232,7 +247,7 @@
         }
     }
 
-    // 🚀 [핵심 검색 기능 개조] 검색 버튼 터치 시 이름 즉시 추적 후 도면까지 강제 갱신 워프
+    // 🚀 [정밀 기사명 탐색 엔진]
     document.getElementById("searchBtn").addEventListener("click", async function () {
         let query = document.getElementById("techSearchInput").value.trim();
         if (!pdfDoc) {
@@ -247,30 +262,31 @@
         const pageIndicator = document.getElementById("pageIndicator");
         pageIndicator.innerText = `🔍 문서 내에서 '${query}' 기사님 찾는 중...`;
 
-        // 1페이지부터 마지막 페이지까지 실시간 초고속 스캔
         let foundPage = -1;
+        
         for (let p = 1; p <= totalPdfPages; p++) {
             const page = await pdfDoc.getPage(p);
             const textContent = await page.getTextContent();
-            const pageText = textContent.items.map(item => item.str || "").join(" ");
+            let pageText = textContent.items.map(item => item.str || "").join(" ");
+            pageText = pageText.replace(/[\r\n\t,`"'’“]|\s+/g, " ").trim();
             
-            if (pageText.includes(query)) {
+            // "설치기사 강정환" 형태 검증 혹은 기사 단독 이름 포함 여부 실시간 매칭
+            if (pageText.includes("설치기사 " + query) || pageText.includes("설치기사" + query) || pageText.includes(" " + query + " ")) {
                 foundPage = p;
-                break; // 최초 매칭되는 첫 장을 찾으면 즉시 루프 탈출
+                break; 
             }
         }
 
         if (foundPage !== -1) {
             currentPdfPage = foundPage;
-            // 🎯 찾은 페이지 번호로 이동하며 도면과 텍스트 정보를 완벽하게 강제 재렌더링!
             await loadAndRenderPage(currentPdfPage);
         } else {
-            alert(`❌ '${query}' 기as님은 이 의뢰서 뭉치에 등록되어 있지 않습니다.`);
+            alert(`❌ '${query}' 기사님은 이 의뢰서 문서에 등록되어 있지 않습니다.`);
             pageIndicator.innerText = `의뢰서 위치: ${currentPdfPage} / ${totalPdfPages} 장`;
         }
     });
 
-    // 전체보기 리셋 버튼 클릭시
+    // 전체보기 리셋 버튼
     document.getElementById("clearSearchBtn").addEventListener("click", async function() {
         document.getElementById("techSearchInput").value = "";
         if (pdfDoc) {
