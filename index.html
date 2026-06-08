@@ -118,13 +118,13 @@
 
             } catch (error) {
                 console.error("PDF 초기 로드 에러:", error);
-                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 새로고침 해보세요.");
+                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 완전히 새로고침 해보세요.");
             }
         };
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (표 내부 줄 단위 추출 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (지정 블랙리스트 완벽 차단 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -158,44 +158,20 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 구조화 처리
+            // 텍스트 추출 및 전처리
             const textContent = await page.getTextContent();
-            
-            // 1단계: Y축 좌표(높이)를 기준으로 텍스트 아이템들을 같은 줄끼리 그룹화합니다.
-            let rowMap = {};
-            textContent.items.forEach(item => {
-                if (!item.str || item.str.trim() === "") return;
-                // Y좌표를 정수형태로 변환하여 오차 보정 오프셋 적용 (유사한 높이는 같은 줄로 처리)
-                let yKey = Math.round(item.transform[5]);
-                
-                let matchedKey = Object.keys(rowMap).find(k => Math.abs(k - yKey) <= 4);
-                if (matchedKey) {
-                    rowMap[matchedKey].push(item);
-                } else {
-                    rowMap[yKey] = [item];
-                }
-            });
-
-            // 2단계: Y축 좌표가 큰 순서대로(위에서 아래로) 줄을 정렬하고 한 줄의 텍스트로 합칩니다.
-            let sortedYKeys = Object.keys(rowMap).sort((a, b) => b - a);
-            let lines = sortedYKeys.map(key => {
-                // 같은 줄 안에서는 X축 좌표가 작은 순서대로(왼쪽에서 오른쪽으로) 정렬
-                let itemsInRow = rowMap[key].sort((a, b) => a.transform[4] - b.transform[4]);
-                return itemsInRow.map(it => it.str).join(" ");
-            });
-
-            // 전체 텍스트 검색용 (기사명/고객명 추출용)
-            let fullTextCombined = lines.join(" ").replace(/\s+/g, " ").toUpperCase();
+            let fullText = textContent.items.map(item => item.str || "").join(" ");
+            fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
 
             // 🕵️‍♂️ 기사명 정밀 추출
             let technicianName = "미지정";
-            const techMatch = fullTextCombined.match(/설치기사\s*([가-힣]{2,4})/i) || fullTextCombined.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
+            const techMatch = fullText.match(/설치기사\s*([가-힣]{2,4})/i) || fullText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
             if (techMatch && techMatch[1]) {
                 technicianName = techMatch[1].trim();
             } else {
-                let techIdx = fullTextCombined.indexOf("설치기사");
+                let techIdx = fullText.indexOf("설치기사");
                 if (techIdx !== -1) {
-                    let subStr = fullTextCombined.substring(techIdx, techIdx + 30);
+                    let subStr = fullText.substring(techIdx, techIdx + 30);
                     let nameMatch = subStr.match(/([가-힣]{2,4})/g);
                     if (nameMatch && nameMatch[1]) technicianName = nameMatch[1];
                 }
@@ -203,13 +179,13 @@
 
             // 🕵️‍♂️ 고객명 정밀 추출
             let customerName = "미확인";
-            const customerMatch = fullTextCombined.match(/고객명\s*([가-힣]{2,4})/i) || fullTextCombined.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
+            const customerMatch = fullText.match(/고객명\s*([가-힣]{2,4})/i) || fullText.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
             if (customerMatch && customerMatch[1] && !["연락처", "설치", "협력"].includes(customerMatch[1])) {
                 customerName = customerMatch[1].trim();
             } else {
-                let custIdx = fullTextCombined.indexOf("고객명");
+                let custIdx = fullText.indexOf("고객명");
                 if (custIdx !== -1) {
-                    let subStr = fullTextCombined.substring(custIdx, custIdx + 30);
+                    let subStr = fullText.substring(custIdx, custIdx + 30);
                     let nameMatch = subStr.match(/([가-힣]{2,4})/g);
                     if (nameMatch && nameMatch[1] && !["연락처", "설치"].includes(nameMatch[1])) customerName = nameMatch[1];
                 }
@@ -217,41 +193,31 @@
 
             let uniqueProducts = [];
             let seenModels = new Set();
-            let isInsideTableZone = false; // 표 내부를 통과하는 중인지 판별 플래그
 
-            // 🎯 3단계: 줄 단위 루프 돌며 "진짜 자재 명세 표" 안의 내용만 추출
-            for (let line of lines) {
-                let upperLine = line.toUpperCase().replace(/[\s,\"]/g, "");
+            // 일반적인 완제품 모델명 추출 패턴
+            const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
+            const matchedWords = fullText.match(airconPattern) || [];
 
-                // 표의 헤더 시작점 감지
-                if (upperLine.includes("주문서번호") && upperLine.includes("모델명")) {
-                    isInsideTableZone = true;
-                    continue;
+            for (let word of matchedWords) {
+                let cleanWord = word.replace(/,/g, '').trim();
+                let finalModel = cleanWord.split('.')[0].trim();
+
+                // 날짜(2026), 자재부품(PQ) 코드는 원천 제외
+                if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
+
+                // 🎯 [무적의 블랙리스트 필터]
+                // PDF 내부 유령 데이터에 숨겨져 있는 세트모델명(기사님 의뢰서 기준)들을 완벽하게 저격 차단합니다.
+                // 끝이 '2' 또는 '1'로 끝나는 세트 코드 형태나 특정 유령 이름들을 무조건 탈락시킵니다.
+                if (finalModel === "FQ20VDWHM2" || finalModel === "FQ17GU2ED2" || finalModel.endsWith("M2") || finalModel.endsWith("D2")) {
+                    continue; 
                 }
 
-                // 표가 완전히 끝나는 하단 요약 및 날짜 구역 진입 시 표 탈출처리 (유령 세트명 원천 봉쇄)
-                if (upperLine.includes("세트모델명") || upperLine.includes("발행일") || upperLine.includes("인수증") || upperLine.includes("확인(성명)")) {
-                    isInsideTableZone = false;
-                }
+                // 한번 더 확실하게 끝자리가 숫자이면 세트명이므로 제외
+                if (/.*\d$/.test(finalModel)) continue;
 
-                // 오직 표 영역 내부에 있을 때만 모델명 수집
-                if (isInsideTableZone) {
-                    const modelPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9-]*\.AKOR/g;
-                    const matchedModels = line.toUpperCase().match(modelPattern) || [];
-
-                    for (let word of matchedModels) {
-                        let finalModel = word.split('.')[0].trim();
-
-                        if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
-
-                        // 끝자리가 숫자로 끝나는 세트모델 코드 더블 체크 탈락 처리
-                        if (/.*\d$/.test(finalModel)) continue;
-
-                        if (!seenModels.has(finalModel)) {
-                            seenModels.add(finalModel);
-                            uniqueProducts.push({ model: finalModel, qty: "1" });
-                        }
-                    }
+                if (!seenModels.has(finalModel)) {
+                    seenModels.add(finalModel);
+                    uniqueProducts.push({ model: finalModel, qty: "1" });
                 }
             }
 
