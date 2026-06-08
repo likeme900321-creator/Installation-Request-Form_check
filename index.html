@@ -3,51 +3,340 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>설치의뢰서 검증 시스템</title>
-    <link rel="stylesheet" href="style.css">
-    
+    <title>다온ENG 에어컨 자재 검수 시스템</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-    <script src="https://unpkg.com/tesseract.js@v4.0.1/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background: #f1f5f9; margin: 0; padding: 15px; color: #1e293b; }
+        .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
+        .card { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+        .main-layout { display: flex; flex-direction: row; gap: 15px; flex-wrap: wrap; }
+        .pdf-section { flex: 1.5; min-width: 320px; }
+        .info-section { flex: 1; min-width: 320px; display: flex; flex-direction: column; gap: 15px; }
+        button { cursor: pointer; transition: background 0.2s; }
+        button:active { opacity: 0.8; }
+    </style>
 </head>
 <body>
 
-    <div class="container">
-        <h1>설치의뢰서 검증 시스템</h1>
-
-        <div class="card">
-            <h3>설치의뢰서 (PDF)</h3>
-            <input type="file" id="pdfFile" accept=".pdf">
-            <br><br>
-            <canvas id="pdfViewer" style="width: 100%; border: 1px solid #ddd; margin-top: 10px; display: none;"></canvas>
-        </div>
-
-        <div class="card">
-            <h3>주문 품목</h3>
-            <ul id="orderList">
-                <li>아직 불러온 품목이 없습니다.</li>
-            </ul>
-        </div>
-
-        <div class="card">
-            <h3>스티커 검수</h3>
-            <input type="file" accept="image/*" capture="environment" id="cameraInput">
-            <br><br>
-            <input type="text" id="manualInput" placeholder="모델명 직접 입력 (또는 사진 인식 자동 입력)">
-            <br><br>
-            <button id="checkBtn">검수</button>
-        </div>
-
-        <div class="card">
-            <h3>인식 결과</h3>
-            <div id="ocrResult">아직 인식된 내용 없음</div>
-        </div>
-
-        <div class="card">
-            <h3>검수 현황</h3>
-            <div id="status">확인완료 0 / 0</div>
-        </div>
+<div class="container">
+    <div class="card" style="text-align: center;">
+        <h2 style="margin-top:0; color:#1e3a8a; font-size:20px;">👷 물류센터 의뢰서 검수 시스템</h2>
+        <input type="file" id="pdfFile" accept=".pdf" style="padding: 10px; border: 2px dashed #cbd5e1; width: 90%; border-radius: 8px; background: #fafafa;">
     </div>
 
-    <script src="app.js"></script>
+    <div style="display: flex; justify-content: space-between; gap: 10px;">
+        <button id="prevPageBtn" style="flex: 1; padding: 14px; font-weight: bold; font-size: 15px; background: #64748b; color: white; border: none; border-radius: 8px;">◀ 이전 의뢰서 (앞장)</button>
+        <button id="nextPageBtn" style="flex: 1; padding: 14px; font-weight: bold; font-size: 15px; background: #2563eb; color: white; border: none; border-radius: 8px;">다음 의뢰서 (뒷장) ▶</button>
+    </div>
+
+    <div id="pageIndicator" style="text-align: center; font-weight: bold; font-size: 16px; color: #1e293b; background: #e2e8f0; padding: 8px; border-radius: 6px;">
+        의뢰서 파일(PDF)을 먼저 선택해 주세요.
+    </div>
+
+    <div class="main-layout">
+        <div class="pdf-section card" style="text-align: center; background: #555;">
+            <div style="color: white; font-size: 12px; margin-bottom: 5px;">[의뢰서 원본 화면]</div>
+            <div style="overflow-x: auto; background: white; padding: 5px; border-radius: 6px;">
+                <canvas id="pdfCanvas" style="max-width: 100%; height: auto; display: block; margin: 0 auto;"></canvas>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <div class="card" style="background: #fafafa;">
+                <h3 style="margin-top:0; font-size:16px; color:#1e3a8a; border-bottom:2px solid #e2e8f0; padding-bottom:5px;">📋 현재 페이지 인식 결과</h3>
+                <div id="orderList">
+                    <span style="color:#64748b; font-size:14px;">의뢰서를 로드하면 기사명과 자재 목록이 여기에 나타납니다.</span>
+                </div>
+            </div>
+
+            <div class="card" style="background: #fff;">
+                <h3 style="margin-top:0; font-size:16px; color:#1e3a8a;">📸 실물 자재 스캔 검수</h3>
+                
+                <label for="cameraInput" style="display:block; text-align:center; padding:14px; background:#059669; color:white; font-weight:bold; border-radius:8px; margin-bottom:10px; cursor:pointer;">
+                    📷 자재 스티커 바코드 촬영
+                </label>
+                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
+
+                <div style="margin-bottom: 10px;">
+                    <label style="font-size:12px; font-weight:bold; color:#475569;">판독된 모델명 (수동 입력/수정 가능):</label>
+                    <input type="text" id="manualInput" style="width: 95%; padding: 10px; font-size: 16px; font-weight: bold; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 5px; color: #b91c1c;">
+                </div>
+
+                <div id="ocrResult" style="padding:10px; background:#f8fafc; border-radius:6px; font-size:13px; margin-bottom:12px; border:1px solid #e2e8f0;">
+                    <span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>
+                </div>
+
+                <button id="checkBtn" style="width:100%; padding:14px; background:#1e3a8a; color:white; font-weight:bold; font-size:16px; border:none; border-radius:8px;">
+                    🎯 검수 확정 완료
+                </button>
+            </div>
+
+            <div class="card" style="text-align: center; background: #f8fafc;">
+                <div style="font-size: 12px; color:#64748b; margin-bottom: 5px;">최종 검수 상태</div>
+                <div id="status" style="font-size: 20px; font-weight: bold; color: #475569;">
+                    검수 대기
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+    let pdfDoc = null;          
+    let currentPdfPage = 1;     
+    let totalPdfPages = 0;      
+    let currentPageTargetModels = []; 
+    let currentRenderTask = null;
+
+    // [1] 파일 선택 시 최초 구동
+    document.getElementById("pdfFile").addEventListener("change", function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const pageIndicator = document.getElementById("pageIndicator");
+        pageIndicator.innerText = "📄 대량 의뢰서 로딩 및 페이지 분할 중...";
+
+        const fileReader = new FileReader();
+        fileReader.onload = async function () {
+            const typedarray = new Uint8Array(this.result);
+            try {
+                const loadingTask = pdfjsLib.getDocument({
+                    data: typedarray,
+                    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/cmaps/',
+                    cMapPacked: true
+                });
+                
+                pdfDoc = await loadingTask.promise;
+                totalPdfPages = pdfDoc.numPages; 
+                currentPdfPage = 1; 
+                
+                await loadAndRenderPage(currentPdfPage);
+
+            } catch (error) {
+                console.error("PDF 초기 로드 에러:", error);
+                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 주소창에 ?v=2 등을 붙여 캐시를 깨고 다시 해보세요.");
+            }
+        };
+        fileReader.readAsArrayBuffer(file);
+    });
+
+    // [2] 🔄 현재 페이지에 맞게 [이미지 + 기사명 + 주문품목]을 일괄 동기화하는 마스터 함수
+    async function loadAndRenderPage(pageNumber) {
+        if (!pdfDoc) return;
+
+        document.getElementById("manualInput").value = "";
+        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>";
+        document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
+        currentPageTargetModels = []; 
+
+        const canvas = document.getElementById("pdfCanvas");
+        const ctx = canvas.getContext("2d");
+        const pageIndicator = document.getElementById("pageIndicator");
+        const orderList = document.getElementById("orderList");
+
+        if (currentRenderTask) {
+            currentRenderTask.cancel();
+            currentRenderTask = null;
+        }
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.width = 0;
+        canvas.height = 0;
+
+        try {
+            const page = await pdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({ scale: 1.5 });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+            };
+            
+            currentRenderTask = page.render(renderContext);
+            await currentRenderTask.promise;
+            currentRenderTask = null; 
+
+            // 텍스트 추출 및 공백 병합 기법
+            const textContent = await page.getTextContent();
+            let fullText = textContent.items.map(item => item.str || "").join(" ");
+            fullText = fullText.replace(/[\r\n\t"']/g, " ").trim();
+
+            // 기사명 추출
+            let technicianName = "미지정";
+            const techMatch = fullText.match(/설치기사\s+([가-힣]{2,4})/);
+            if (techMatch && techMatch[1]) {
+                technicianName = techMatch[1];
+            }
+
+            // 고객명 추출
+            let customerName = "미확인";
+            const customerMatch = fullText.match(/고객명\s+([가-힣]{2,4})/);
+            if (customerMatch && customerMatch[1]) {
+                customerName = customerMatch[1];
+            }
+
+            // 완제품 에어컨 패턴 정밀 분석 (.AKOR 대응)
+            const words = fullText.split(/\s+/);
+            let uniqueProducts = [];
+            let seenModels = new Set();
+
+            for (let word of words) {
+                let cleanWord = word.replace(/,/g, '').trim().toUpperCase();
+                
+                if (cleanWord.includes('AKOR') || /^[A-Z]{2,4}\d{2,4}[A-Z0-9]+/.test(cleanWord)) {
+                    if (cleanWord.startsWith('PQ')) continue; 
+                    if (cleanWord.includes('202606')) continue; 
+
+                    let finalModel = cleanWord.split('.')[0].trim();
+
+                    if (finalModel.length >= 5 && !seenModels.has(finalModel)) {
+                        seenModels.add(finalModel);
+                        uniqueProducts.push({ model: finalModel, qty: "1" });
+                    }
+                }
+            }
+
+            const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9]+)/);
+            if (setModelMatch && setModelMatch[1]) {
+                let setModel = setModelMatch[1].split('.')[0].trim().toUpperCase();
+                if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ')) {
+                    seenModels.add(setModel);
+                    uniqueProducts.push({ model: setModel, qty: "1" });
+                }
+            }
+
+            currentPageTargetModels = uniqueProducts.map(p => p.model);
+
+            // 화면에 현재 페이지 전용 UI 갱신 생성
+            let htmlContent = `
+                <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
+                    👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
+                </div>
+                <div style="margin-bottom: 10px; font-size:14px; color:#334155;">
+                    👤 <b>고객명:</b> ${customerName} 고객님
+                </div>
+                <div style="font-weight:bold; margin-top:15px; margin-bottom:5px; font-size:13px; color:#4f46e5;">[주문 품목 리스트]</div>
+            `;
+
+            if (uniqueProducts.length === 0) {
+                htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정된 일반 완제품 품목이 없습니다.</div>`;
+            } else {
+                uniqueProducts.forEach((prod, idx) => {
+                    htmlContent += `
+                        <div style="margin-bottom: 8px; border:1px solid #e2e8f0; padding:10px; border-radius:6px; background:white;">
+                            • <b>모델 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
+                            <span style="float:right; color:#1e293b; font-weight:bold;">${prod.qty} 개</span>
+                        </div>
+                    `;
+                });
+            }
+            
+            orderList.innerHTML = htmlContent;
+            pageIndicator.innerText = `의뢰서 건수: ${pageNumber} / ${totalPdfPages} 장`;
+            document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (품목: ${currentPageTargetModels.length}개)</span>`;
+
+        } catch (err) {
+            if (err.name === 'RenderingCancelledException') {
+                console.log('이전 작업 정상 취소');
+            } else {
+                console.error("동기화 실패:", err);
+                pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 중 에러 발생`;
+            }
+        }
+    }
+
+    // [3] 이전장 연동 버튼
+    document.getElementById("prevPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage > 1) {
+            currentPdfPage--;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert("첫 번째 의뢰서 페이지입니다.");
+        }
+    });
+
+    // [4] 다음장 연동 버튼
+    document.getElementById("nextPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage < totalPdfPages) {
+            currentPdfPage++;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert("마지막 의뢰서 페이지입니다.");
+        }
+    });
+
+    // [5] 사진 스캔 판독 대조
+    document.getElementById("cameraInput").addEventListener("change", async function (e) {
+        const photoFile = e.target.files[0];
+        if (!photoFile) return;
+
+        const manualInput = document.getElementById("manualInput");
+        const ocrResultDiv = document.getElementById("ocrResult");
+        
+        manualInput.value = "";
+        ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 페이지 정보와 대조 중...</span>";
+
+        try {
+            const result = await Tesseract.recognize(photoFile, 'eng', {
+                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+            });
+            
+            let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
+            let isMatched = false;
+            let matchedModel = "";
+
+            for (let model of currentPageTargetModels) {
+                if (detectedText.includes(model)) {
+                    isMatched = true;
+                    matchedModel = model;
+                    break;
+                }
+            }
+
+            if (isMatched) {
+                manualInput.value = matchedModel;
+                ocrResultDiv.innerHTML = `<span style="color: green; font-weight: bold;">✅ 일치 확인 (${matchedModel})! 검수를 확정하세요.</span>`;
+            } else {
+                manualInput.value = "";
+                ocrResultDiv.innerHTML = `<span style="color: red; font-weight: bold;">❌ 현재 화면 기사님 품목에 없는 제품 바코드입니다.</span>`;
+            }
+
+        } catch (err) {
+            console.error(err);
+            ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (수동 입력 가능)</span>";
+        }
+    });
+
+    // [6] 최종 검수 확정 완료 처리
+    document.getElementById("checkBtn").addEventListener("click", function () {
+        const manualInput = document.getElementById("manualInput");
+        const statusDiv = document.getElementById("status");
+        const modelToCompare = manualInput.value.trim().toUpperCase();
+
+        if (modelToCompare === "") {
+            alert("모델명을 직접 입력하거나 사진을 다시 찍어주세요.");
+            return;
+        }
+
+        const isFinalCheckPassed = currentPageTargetModels.includes(modelToCompare);
+
+        if (isFinalCheckPassed) {
+            alert(`✅ 검수 성공!\n현재 화면의 자재가 맞습니다: ${modelToCompare}`);
+            statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">일치 확인완료 (${modelToCompare})</span>`;
+        } else {
+            alert(`❌ 검수 불일치!\n현재 활성화된 기사님 품목 리스트에는 [${modelToCompare}]가 없습니다.`);
+            statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">⚠️ 미일치 제품 스캔됨</span>`;
+        }
+    });
+</script>
+
 </body>
 </html>
