@@ -124,7 +124,7 @@
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (2026 이중 차단 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (세트모델명 제외 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -165,6 +165,10 @@
             // 텍스트 추출 및 특수기호 청소
             const textContent = await page.getTextContent();
             let fullText = textContent.items.map(item => item.str || "").join(" ");
+            
+            // 💡 [버그 해결 핵심] 의뢰서 맨 아래 '세트모델명' 구역 문자열은 아예 통째로 지워버려서 유령 모델 차단
+            fullText = fullText.replace(/세트모델명\s*:\s*[A-Z0-9.-]+/gi, "");
+            
             fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
 
             // 기사명 추출
@@ -184,36 +188,26 @@
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            // 진짜 에어컨 완제품 모델명 패턴 매칭 (영문 2~4자 + 숫자 구조)
+            // 진짜 표 내부의 에어컨 완제품 모델명 패턴 매칭 (영문 2~4자 + 숫자 구조)
             const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
             const matchedWords = fullText.match(airconPattern) || [];
 
             for (let word of matchedWords) {
                 let cleanWord = word.replace(/,/g, '').trim();
 
-                // 1차 필터: 단어 자체에 날짜나 자재 코드가 포함되면 탈락
+                // 1차 필터: 날짜나 자재부품 코드가 포함되면 탈락
                 if (cleanWord.includes('2026')) continue;
                 if (cleanWord.startsWith('PQ')) continue;
 
-                // 마침표 뒤 국가코드 제거
+                // 마침표 뒤 국가코드(.AKOR 등) 제거
                 let finalModel = cleanWord.split('.')[0].trim();
 
-                // ⭐ 2차 이중 필터: 최종 정제된 글자가 '2026'이거나 순수 숫자인 경우 완전히 제외
+                // 2차 필터: 최종 정제된 글자가 '2026'이거나 순수 숫자인 경우 또는 너무 짧으면 제외
                 if (finalModel === '2026' || /^\d+$/.test(finalModel) || finalModel.length < 5) continue;
 
                 if (!seenModels.has(finalModel)) {
                     seenModels.add(finalModel);
                     uniqueProducts.push({ model: finalModel, qty: "1" });
-                }
-            }
-
-            // 세트모델명 구역 수집 및 검증
-            const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9.]+)/);
-            if (setModelMatch && setModelMatch[1]) {
-                let setModel = setModelMatch[1].split('.')[0].trim();
-                if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ') && !setModel.includes('2026') && !/^\d+$/.test(setModel) && setModel.length >= 5) {
-                    seenModels.add(setModel);
-                    uniqueProducts.push({ model: setModel, qty: "1" });
                 }
             }
 
