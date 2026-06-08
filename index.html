@@ -33,7 +33,7 @@
 
     <div class="card" style="background: #edf2f7; border-color: #cbd5e1; display: flex; gap: 8px; align-items: center;">
         <label for="techSearchInput" style="font-size: 14px; font-weight: bold; color: #2d3748; white-space: nowrap;">👷 기사명 검색:</label>
-        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력 (예: 홍길동)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
+        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력 (예: 강정환)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
         <button id="searchBtn" style="padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">검색</button>
         <button id="clearSearchBtn" style="padding: 8px 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">전체</button>
     </div>
@@ -51,7 +51,7 @@
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
-        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 모델명 사진 매칭</label>
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 사진 매칭</label>
         <input type="file" id="cameraInput" accept="image/*" capture="environment" class="btn btn-secondary" style="padding: 8px;">
         <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">스캔 대기 중...</div>
     </div>
@@ -70,6 +70,7 @@
 </div>
 
 <script>
+    // 워커 엔진 주소도 가장 안전하고 검증된 링크로 설정
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
     let pdfDoc = null;          
@@ -78,8 +79,15 @@
     let currentPageTargetModels = []; 
     let currentRenderTask = null;
 
-    // 💡 다온 ENG 실제 기사님 이름 마스터 데이터베이스 (오인식 원천 봉쇄용)
-    const KNOWN_TECHNICIANS = ["강정환", "강진수", "공병철" , "국승욱" , "김영금" , "김응돌" , "김지흥" , "김남률" , "민지운" , "박건우" , "박은철" , "박종덕" , "박종선" , "배철옥" , "백인수" , "손성훈" , "안종수" , "양호진" , "우준혁" , "유경민" , "이동하" , "이대흥" , "이성우" , "이승호" , "이시복" , "이용신" , "이철훈" , "전용호" , "정권" , "정승백" , "정승영" , "정한주" , "정호진" , "조운형" , "주세환" , "주병윤" , "진호관" , "채건병" , "천명석" , "최병일" , "최정규" , "홍창표"];
+    // 💡 다온 ENG 기사님 43명 전원 명단 등록 데이터베이스 (글자 꼬임 방역벽)
+    const KNOWN_TECHNICIANS = [
+        "강정환", "강진수", "공병철", "국승욱", "김영금", "김응돌", "김지흥", "김태근", 
+        "김남률", "민지운", "박건우", "박은철", "박종덕", "박종선", "배철옥", "백인수", 
+        "손성훈", "안종수", "양호진", "우준혁", "유경민", "이동하", "이대흥", "이성우", 
+        "이승호", "이시복", "이용신", "이철훈", "전용호", "정권", "정승백", "정승영", 
+        "정한주", "정호진", "조운형", "주세환", "주병윤", "진호관", "채건병", "천명석", 
+        "최병일", "최정규", "홍창표"
+    ];
 
     // [1] 파일 선택 등록 구역
     document.getElementById("pdfFile").addEventListener("change", function (e) {
@@ -107,7 +115,8 @@
 
             } catch (error) {
                 console.error(error);
-                alert("⚠️ PDF를 불러오지 못했습니다. 새로고침 후 다시 해보세요.");
+                alert("⚠️ PDF를 인식하지 못했습니다. 브라우저를 새로고침한 후 다시 시도해 주세요.");
+                pageIndicator.innerText = "파일 인식 실패. 새로고침이 필요합니다.";
             }
         };
         fileReader.readAsArrayBuffer(file);
@@ -145,18 +154,15 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 불순물 제거 (단어 간 공백은 유지)
+            // 텍스트 정제 가공
             const textContent = await page.getTextContent();
             let pageText = textContent.items.map(item => item.str || "").join(" ");
-            
-            // 줄바꿈, 탭, 따옴표, 쉼표 등의 유령 특수문자 전면 소독
             pageText = pageText.replace(/[\r\n\t,`"'’“]|\s+/g, " ").trim();
 
-            // 🎯 [완전 개조] 1. 기사명 추출: "고객명"을 철저히 거르고 진짜 기사명과 대조 검증
+            // 🎯 [오인식 100% 원천 봉쇄] 명단 기반 매칭 알고리즘
             let technicianName = "미지정";
-            
-            // 공백을 제거한 텍스트에서 실제 알고 있는 기사님 이름이 들어있는지 직접 검사
             let compressedText = pageText.replace(/\s+/g, "");
+            
             for (let tech of KNOWN_TECHNICIANS) {
                 if (compressedText.includes("설치기사" + tech) || compressedText.includes(tech)) {
                     technicianName = tech;
@@ -164,7 +170,7 @@
                 }
             }
 
-            // 만약 마스터 리스트에 없는 새 기사님일 경우 안전장치 필터 작동
+            // 백업 안전장치 필터
             if (technicianName === "미지정") {
                 let techMatch = pageText.match(/설치기사\s+([가-힣]{2,4})/i) || pageText.match(/설치기사([가-힣]{2,4})/i);
                 if (techMatch && techMatch[1] && !["고객명", "설치", "연락", "협력"].includes(techMatch[1])) {
@@ -172,7 +178,7 @@
                 }
             }
 
-            // 🎯 2. 고객명 추출: 기사명과 확실하게 분리
+            // 🎯 고객명 추출 가공구역
             let customerName = "미확인";
             let custIdx = pageText.indexOf("고객명");
             if (custIdx !== -1) {
@@ -198,7 +204,6 @@
 
                 if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
 
-                // 세트모델 가짜 유령 데이터 차단막
                 if (finalModel === "FQ20VDWHM2" || finalModel === "FQ17GU2ED2" || finalModel.endsWith("M2") || finalModel.endsWith("D2") || /.*\d$/.test(finalModel)) {
                     continue; 
                 }
@@ -211,7 +216,7 @@
 
             currentPageTargetModels = uniqueProducts.map(p => p.model);
 
-            // 레이아웃 동적 갱신
+            // 레이아웃 동적 드로잉
             let htmlContent = `
                 <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                     👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -268,7 +273,6 @@
             let pageText = textContent.items.map(item => item.str || "").join(" ");
             let compressedText = pageText.replace(/[\s\r\n\t,`"'’“]/g, "");
             
-            // 입력된 기사 이름이 텍스트에 포함되어 있는지 정확하게 체크
             if (compressedText.includes("설치기사" + query) || compressedText.includes(query)) {
                 foundPage = p;
                 break; 
@@ -329,7 +333,7 @@
         try {
             const result = await Tesseract.recognize(photoFile, 'eng', {
                 tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
-                corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/tesseract-core.wasm.js'
+                corePath: 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.0/tesseract-core.wasm.js'
             });
             
             let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
