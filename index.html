@@ -3,90 +3,69 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>다온ENG 에어컨 자재 검수 시스템</title>
+    <title>Daon E.N.G 에어컨 자재 검수 시스템</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.0/dist/tesseract.min.js"></script>
     
     <style>
-        body { font-family: 'Malgun Gothic', sans-serif; background: #f1f5f9; margin: 0; padding: 15px; color: #1e293b; }
-        .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
-        .card { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
-        .main-layout { display: flex; flex-direction: row; gap: 15px; flex-wrap: wrap; }
-        .pdf-section { flex: 1.5; min-width: 320px; }
-        .info-section { flex: 1; min-width: 320px; display: flex; flex-direction: column; gap: 15px; }
-        button { cursor: pointer; transition: background 0.2s; }
-        button:active { opacity: 0.8; }
+        body { font-family: 'Arial', sans-serif; background-color: #f1f5f9; padding: 15px; margin: 0; color: #1e293b; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        h2 { text-align: center; color: #1e3a8a; margin-top: 0; font-size: 20px; }
+        .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+        .btn { width: 100%; padding: 12px; border: none; border-radius: 6px; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 5px; }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-secondary { background: #64748b; color: white; }
+        .btn-success { background: #16a34a; color: white; }
+        .page-ctrl { display: flex; justify-content: space-between; gap: 10px; margin: 10px 0; }
+        .page-ctrl button { flex: 1; padding: 10px; font-weight: bold; background: #e2e8f0; border: none; border-radius: 6px; cursor: pointer; }
+        #pdfCanvas { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 10px; background: #e2e8f0; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <div class="card" style="text-align: center;">
-        <h2 style="margin-top:0; color:#1e3a8a; font-size:20px;">👷 물류센터 의뢰서 검수 시스템</h2>
-        <input type="file" id="pdfFile" accept=".pdf" style="padding: 10px; border: 2px dashed #cbd5e1; width: 90%; border-radius: 8px; background: #fafafa;">
+    <h2>Daon E.N.G 자재 검수 시스템</h2>
+    
+    <div class="card">
+        <label style="font-weight: bold; display: block; margin-bottom: 8px; font-size: 14px;">📄 설치의뢰서 PDF 등록</label>
+        <input type="file" id="pdfFile" accept="application/pdf" style="width: 100%; font-size: 13px;">
     </div>
 
-    <div style="display: flex; justify-content: space-between; gap: 10px;">
-        <button id="prevPageBtn" style="flex: 1; padding: 14px; font-weight: bold; font-size: 15px; background: #64748b; color: white; border: none; border-radius: 8px;">◀ 이전 의뢰서 (앞장)</button>
-        <button id="nextPageBtn" style="flex: 1; padding: 14px; font-weight: bold; font-size: 15px; background: #2563eb; color: white; border: none; border-radius: 8px;">다음 의뢰서 (뒷장) ▶</button>
+    <div class="card" style="background: #edf2f7; border-color: #cbd5e1; display: flex; gap: 8px; align-items: center;">
+        <label for="techSearchInput" style="font-size: 14px; font-weight: bold; color: #2d3748; white-space: nowrap;">👷 기사명 검색:</label>
+        <input type="text" id="techSearchInput" placeholder="기사님 이름 입력 (예: 강정환)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
+        <button id="clearSearchBtn" style="padding: 8px 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">전체보기</button>
     </div>
 
-    <div id="pageIndicator" style="text-align: center; font-weight: bold; font-size: 16px; color: #1e293b; background: #e2e8f0; padding: 8px; border-radius: 6px;">
-        의뢰서 파일(PDF)을 먼저 선택해 주세요.
+    <div class="page-ctrl">
+        <button id="prevPageBtn">◀ 이전 의뢰서</button>
+        <button id="nextPageBtn">다음 의뢰서 ▶</button>
+    </div>
+    <div id="pageIndicator" style="text-align: center; font-weight: bold; color: #475569; font-size: 14px; margin-bottom: 10px;">
+        의뢰서 파일을 먼저 선택해 주세요.
     </div>
 
-    <div class="main-layout">
-        <div class="pdf-section card" style="text-align: center; background: #555;">
-            <div style="color: white; font-size: 12px; margin-bottom: 5px;">[의뢰서 원본 화면]</div>
-            <div style="overflow-x: auto; background: white; padding: 5px; border-radius: 6px;">
-                <canvas id="pdfCanvas" style="max-width: 100%; height: auto; display: block; margin: 0 auto;"></canvas>
-            </div>
-        </div>
+    <div id="orderList" class="card" style="min-height: 100px; background: #fafafa;">
+        <span style="color: #94a3b8; font-size: 13px;">의뢰서가 로드되면 기사님 정보와 진짜 자재 리스트가 여기에 나타납니다.</span>
+    </div>
 
-        <div class="info-section">
-            <div class="card" style="background: #fafafa;">
-                <h3 style="margin-top:0; font-size:16px; color:#1e3a8a; border-bottom:2px solid #e2e8f0; padding-bottom:5px;">📋 현재 페이지 인식 결과</h3>
-                <div id="orderList">
-                    <span style="color:#64748b; font-size:14px;">의뢰서를 로드하면 기사명과 자재 목록이 여기에 나타납니다.</span>
-                </div>
-            </div>
-
-          
-            <div class="card" style="background: #fff;">
-                <h3 style="margin-top:0; font-size:16px; color:#1e3a8a;">📸 실물 자재 스캔 검수</h3>
-                
-                <label for="cameraInput" style="display:block; text-align:center; padding:14px; background:#059669; color:white; font-weight:bold; border-radius:8px; margin-bottom:10px; cursor:pointer;">
-                    📷 자재 스티커 모델명 촬영
-                </label>
-                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
-
-                <div style="margin-bottom: 10px;">
-                    <label style="font-size:12px; font-weight:bold; color:#475569;">판독된 모델명 (수동 입력/수정 가능):</label>
-                    <input type="text" id="manualInput" style="width: 95%; padding: 10px; font-size: 16px; font-weight: bold; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 5px; color: #b91c1c;">
-                </div>
-
-                <div id="ocrResult" style="padding:10px; background:#f8fafc; border-radius:6px; font-size:13px; margin-bottom:12px; border:1px solid #e2e8f0;">
-                    <span style='color: #64748b;'>📸 스티커 모델명 사진을 촬영해 주세요.</span>
-                </div>
-
-                <button id="checkBtn" style="width:100%; padding:14px; background:#1e3a8a; color:white; font-weight:bold; font-size:16px; border:none; border-radius:8px;">
-                    🎯 검수 확정 완료
-                </button>
-            </div>
-            <div style="margin: 15px 0; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; display: flex; gap: 8px; align-items: center;">
-            <label for="techSearchInput" style="font-size: 13px; font-weight: bold; color: #334155;">👷 기사명 검색:</label>
-            <input type="text" id="techSearchInput" placeholder="예: 홍길동" style="flex: 1; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 13px;">
-            <button id="clearSearchBtn" style="padding: 6px 12px; background: #64748b; color: white; border: none; border-radius: 4px; font-size: 13px; cursor: pointer; font-weight: bold;">전체보기</button>
-            </div>
-            
-            <div class="card" style="text-align: center; background: #f8fafc;">
-                <div style="font-size: 12px; color:#64748b; margin-bottom: 5px;">최종 검수 상태</div>
-                <div id="status" style="font-size: 20px; font-weight: bold; color: #475569;">
-                    검수 대기
-                </div>
-            </div>
+    <div class="card" style="border-left: 5px solid #2563eb;">
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 사진 매칭</label>
+        <input type="file" id="cameraInput" accept="image/*" capture="environment" class="btn btn-secondary" style="padding: 8px;">
+        <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">
+            스캔 대기 중...
         </div>
     </div>
+
+    <div class="card" style="border-left: 5px solid #16a34a;">
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #15803d;">🔍 2단계: 수동 확인 및 확정</label>
+        <input type="text" id="manualInput" placeholder="바코드가 안 찍힐 때 모델명 직접 입력 가능" style="width:95%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 8px; font-size: 14px;">
+        <button id="checkBtn" class="btn btn-success">✅ 상차 자재 검수 확정</button>
+        <div id="status" style="margin-top: 10px; text-align: center; font-size: 15px;"></div>
+    </div>
+
+    <div style="font-weight: bold; margin-top: 15px; font-size: 13px; color: #64748b;">📄 원본 의뢰서 도면 미리보기</div>
+    <canvas id="pdfCanvas"></canvas>
 </div>
 
 <script>
@@ -98,18 +77,17 @@
     let currentPageTargetModels = []; 
     let currentRenderTask = null;
     
-    // 대량 의뢰서 전수조사 후 기사별 페이지 위치를 저장할 맵데이터
+    // 💡 전체 PDF를 읽어서 기사님별 페이지 지도(색인)를 저장할 바구니
     let technicianPageMap = {}; 
 
-    // [1] 파일 선택 시 최초 구동 및 전수조사
+    // [1] 파일 선택 시 전체 페이지 전수조사 및 색인 생성
     document.getElementById("pdfFile").addEventListener("change", function (e) {
         const file = e.target.files[0];
         if (!file) return;
 
         const pageIndicator = document.getElementById("pageIndicator");
-        pageIndicator.innerText = "📄 대량 의뢰서 분석 및 기사별 색인 생성 중...";
+        pageIndicator.innerText = "📄 대량 의뢰서 고속 분석 중... 잠시만 기다려주세요.";
         
-        // 검색창 초기화
         document.getElementById("techSearchInput").value = "";
         technicianPageMap = {};
 
@@ -127,7 +105,7 @@
                 totalPdfPages = pdfDoc.numPages; 
                 currentPdfPage = 1; 
                 
-                // 속도 향상을 위해 배경에서 전체 페이지의 기사명만 빠르게 선독형 색인 생성
+                // ⚡ 기사님 검색 속도를 위해 첫 실행 시 78장 전수조사 기법 도입
                 for (let p = 1; p <= totalPdfPages; p++) {
                     const page = await pdfDoc.getPage(p);
                     const textContent = await page.getTextContent();
@@ -150,21 +128,22 @@
                         if (!technicianPageMap[tName]) {
                             technicianPageMap[tName] = [];
                         }
-                        technicianPageMap[tName].push(p); // 기사별 해당 페이지 번호 등록
+                        technicianPageMap[tName].push(p); 
                     }
                 }
                 
+                // 전수조사 끝나면 1페이지 활성화
                 await loadAndRenderPage(currentPdfPage);
 
             } catch (error) {
-                console.error("PDF 초기 로드 에러:", error);
+                console.error("PDF 로드 에러:", error);
                 alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 새로고침 해보세요.");
             }
         };
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수
+    // [2] 🔄 페이지 렌더링 및 철벽 자재 필터 마스터 함수
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -189,7 +168,7 @@
 
         try {
             const page = await pdfDoc.getPage(pageNumber);
-            const viewport = page.getViewport({ scale: 1.5 });
+            const viewport = page.getViewport({ scale: 1.3 });
             canvas.height = viewport.height;
             canvas.width = viewport.width;
 
@@ -242,7 +221,7 @@
 
                 if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
 
-                // 철벽 블랙리스트 필터 유지
+                // 🎯 세트모델명 가짜 레이어 철벽 블랙리스트 차단막
                 if (finalModel === "FQ20VDWHM2" || finalModel === "FQ17GU2ED2" || finalModel.endsWith("M2") || finalModel.endsWith("D2") || /.*\d$/.test(finalModel)) {
                     continue; 
                 }
@@ -255,6 +234,7 @@
 
             currentPageTargetModels = uniqueProducts.map(p => p.model);
 
+            // UI 출력단 조립
             let htmlContent = `
                 <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                     👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -262,16 +242,16 @@
                 <div style="margin-bottom: 10px; font-size:14px; color:#334155;">
                     👤 <b>고객명:</b> ${customerName} 고객님
                 </div>
-                <div style="font-weight:bold; margin-top:15px; margin-bottom:5px; font-size:13px; color:#4f46e5;">[주문 품목 리스트]</div>
+                <div style="font-weight:bold; margin-top:15px; margin-bottom:5px; font-size:13px; color:#4f46e5;">[배정된 진짜 단품 자재]</div>
             `;
 
             if (uniqueProducts.length === 0) {
-                htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정된 일반 완제품 단품 품목이 없습니다.</div>`;
+                htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정된 완제품 단품 품목이 없습니다.</div>`;
             } else {
                 uniqueProducts.forEach((prod, idx) => {
                     htmlContent += `
                         <div style="margin-bottom: 8px; border:1px solid #e2e8f0; padding:10px; border-radius:6px; background:white;">
-                            • <b>모델 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
+                            • <b>자재 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
                             <span style="float:right; color:#1e293b; font-weight:bold;">1 개</span>
                         </div>
                     `;
@@ -279,36 +259,36 @@
             }
             
             orderList.innerHTML = htmlContent;
-            pageIndicator.innerText = `의뢰서 건수: ${pageNumber} / ${totalPdfPages} 장`;
-            document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (품목: ${currentPageTargetModels.length}개)</span>`;
+            pageIndicator.innerText = `의뢰서 위치: ${pageNumber} / ${totalPdfPages} 장`;
+            document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (자재: ${currentPageTargetModels.length}개)</span>`;
 
         } catch (err) {
             if (err.name === 'RenderingCancelledException') {
-                console.log('이전 작업 취소됨');
+                console.log('이전 작업 안전 취소');
             } else {
                 console.error("동기화 실패:", err);
-                pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 중 에러 발생`;
+                pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 실패`;
             }
         }
     }
 
-    // 🎯 [신규 추가] 기사명 실시간 필터 검색 기능
+    // 🚀 [핵심 기능 연동] 기사명 입력 즉시 해당 의뢰서 페이지로 순간이동(텔레포트)
     document.getElementById("techSearchInput").addEventListener("input", async function (e) {
         let query = e.target.value.trim();
         if (!pdfDoc || query === "") return;
 
-        // 검색어와 일치하는 기사님 검색 (부분 매칭 지원)
+        // 검색어와 이름이 포함되는 기사님 찾기
         let matchedKey = Object.keys(technicianPageMap).find(name => name.includes(query));
         
         if (matchedKey && technicianPageMap[matchedKey].length > 0) {
-            // 해당 기사님이 배정된 첫 번째 페이지번호를 가져와 화면 이동
+            // 해당 기사님이 속해있는 첫 번째 의뢰서 페이지 번호 획득 후 즉시 이동
             let targetPage = technicianPageMap[matchedKey][0];
             currentPdfPage = targetPage;
             await loadAndRenderPage(currentPdfPage);
         }
     });
 
-    // 🎯 [신규 추가] 전체보기 버튼 클릭 시 필터 해제
+    // 🎯 전체보기 버튼 클릭 시 리셋 기능
     document.getElementById("clearSearchBtn").addEventListener("click", async function() {
         document.getElementById("techSearchInput").value = "";
         if (pdfDoc) {
@@ -317,13 +297,12 @@
         }
     });
 
-    // [3] 이전장 버튼
+    // [3] 이전장 버튼 (필터링 연동형)
     document.getElementById("prevPageBtn").addEventListener("click", async function () {
         if (!pdfDoc) return;
         
         let query = document.getElementById("techSearchInput").value.trim();
         if (query !== "") {
-            // 특정 기사 필터링 상태일 때는 해당 기사님의 이전 페이지로 이동
             let matchedKey = Object.keys(technicianPageMap).find(name => name.includes(query));
             if (matchedKey) {
                 let pages = technicianPageMap[matchedKey];
@@ -334,7 +313,7 @@
                     return;
                 }
             }
-            alert("해당 기사님의 첫 번째 의뢰서 페이지입니다.");
+            alert("이 검색된 기사님의 첫 페이지입니다.");
             return;
         }
 
@@ -346,13 +325,12 @@
         }
     });
 
-    // [4] 다음장 버튼
+    // [4] 다음장 버튼 (필터링 연동형)
     document.getElementById("nextPageBtn").addEventListener("click", async function () {
         if (!pdfDoc) return;
 
         let query = document.getElementById("techSearchInput").value.trim();
         if (query !== "") {
-            // 특정 기사 필터링 상태일 때는 해당 기사님의 다음 페이지로 이동
             let matchedKey = Object.keys(technicianPageMap).find(name => name.includes(query));
             if (matchedKey) {
                 let pages = technicianPageMap[matchedKey];
@@ -363,7 +341,7 @@
                     return;
                 }
             }
-            alert("해당 기사님의 마지막 의뢰서 페이지입니다.");
+            alert("이 검색된 기사님의 마지막 페이지입니다.");
             return;
         }
 
@@ -375,7 +353,7 @@
         }
     });
 
-    // [5] 사진 스캔 판독
+    // [5] 사진 스마트 스캔 매칭
     document.getElementById("cameraInput").addEventListener("change", async function (e) {
         const photoFile = e.target.files[0];
         if (!photoFile) return;
@@ -384,7 +362,7 @@
         const ocrResultDiv = document.getElementById("ocrResult");
         
         manualInput.value = "";
-        ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 페이지 정보와 대조 중...</span>";
+        ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 기사님 자재 리스트와 매칭 분석 중...</span>";
 
         try {
             const result = await Tesseract.recognize(photoFile, 'eng', {
@@ -406,40 +384,40 @@
 
             if (isMatched) {
                 manualInput.value = matchedModel;
-                ocrResultDiv.innerHTML = `<span style="color: green; font-weight: bold;">✅ 일치 확인 (${matchedModel})! 검수를 확정하세요.</span>`;
+                ocrResultDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">✅ 상차 일치 확인 (${matchedModel})!</span>`;
             } else {
                 manualInput.value = "";
-                ocrResultDiv.innerHTML = `<span style="color: red; font-weight: bold;">❌ 현재 화면 기사님 품목에 없는 제품 바코드입니다.</span>`;
+                ocrResultDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">❌ 이 기사님께 배정되지 않은 타 기사님 자재 바코드입니다.</span>`;
             }
 
         } catch (err) {
             console.error(err);
-            ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (수동 입력 가능)</span>";
+            ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (수동 입력 해주세요)</span>";
         }
     });
 
-    // [6] 최종 검수 확정
+    // [6] 최종 상차 확정 도장 누르기
     document.getElementById("checkBtn").addEventListener("click", function () {
         const manualInput = document.getElementById("manualInput");
         const statusDiv = document.getElementById("status");
         const modelToCompare = manualInput.value.trim().toUpperCase();
 
         if (modelToCompare === "") {
-            alert("모델명을 직접 입력하거나 사진을 다시 찍어주세요.");
+            alert("모델명을 직접 입력하거나 바코드 사진을 찍어주세요.");
             return;
         }
 
         const isFinalCheckPassed = currentPageTargetModels.includes(modelToCompare);
 
         if (isFinalCheckPassed) {
-            alert(`✅ 검수 성공!\n현재 화면의 자재가 맞습니다: ${modelToCompare}`);
-            statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">일치 확인완료 (${modelToCompare})</span>`;
+            alert(`✅ 검수 대조 통과!\n현재 화면 기사님의 실물 자재가 확실합니다: ${modelToCompare}`);
+            statusDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">상차 완료 승인 (${modelToCompare})</span>`;
         } else {
-            alert(`❌ 검수 불일치!\n현재 활성화된 기사님 품목 리스트에는 [${modelToCompare}]가 없습니다.`);
-            statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">⚠️ 미일치 제품 스캔됨</span>`;
+            alert(`❌ 검수 불일치 예방 경고!\n현재 기사님 품목 리스트에는 [${modelToCompare}]가 없습니다. 다른 차에 실어주세요.`);
+            statusDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">⚠️ 오상차 위험 품목 감지됨</span>`;
         }
     });
 </script>
-    
+
 </body>
 </html>
