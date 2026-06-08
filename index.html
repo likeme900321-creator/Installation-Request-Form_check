@@ -118,13 +118,13 @@
 
             } catch (error) {
                 console.error("PDF 초기 로드 에러:", error);
-                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 껐다 켜보세요.");
+                alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 브라우저를 새로고침 해보세요.");
             }
         };
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (단품 전용 철벽 필터 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (세트 구역 파쇄 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -158,19 +158,34 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 전처리
+            // 텍스트 추출 및 공백 정규화
             const textContent = await page.getTextContent();
-            let rawText = textContent.items.map(item => item.str || "").join(" ");
-            // 연속된 공백 청소 및 대문자화
-            let fullText = rawText.replace(/\s+/g, " ").trim().toUpperCase();
+            let rawItems = textContent.items.map(item => (item.str || "").trim());
+            
+            // 💡 [핵심 패치] '세트모델명' 텍스트 구역 원천 차단 알고리즘
+            // PDF 안에 들어있는 모든 단어들을 검사하면서 '세트'라는 말이 나오면 
+            // 해당 단어와 바로 다음에 붙어오는 모델명 단어까지 리스트에서 완전히 지워버립니다.
+            let cleanItems = [];
+            for (let i = 0; i < rawItems.length; i++) {
+                let item = rawItems[i].toUpperCase();
+                if (item.includes("세트") || item.includes("SET")) {
+                    // 세트명 문구와 그 뒤에 따라오는 모델명 코드(.AKOR 포함된 것)까지 강제 건너뛰기
+                    if (i + 1 < rawItems.length && (rawItems[i+1].toUpperCase().includes("AKOR") || /[A-Z0-9]/.test(rawItems[i+1]))) {
+                        i++; 
+                    }
+                    continue;
+                }
+                cleanItems.push(rawItems[i]);
+            }
 
-            // 🕵️‍♂️ [보안 패치 1] 담당 설치기사명 정밀 추출
+            let fullText = cleanItems.join(" ").replace(/\s+/g, " ").trim().toUpperCase();
+
+            // 🕵️‍♂️ 기사명 정밀 추출
             let technicianName = "미지정";
             const techMatch = fullText.match(/설치기사\s*([가-힣]{2,4})/i) || fullText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
             if (techMatch && techMatch[1]) {
                 technicianName = techMatch[1].trim();
             } else {
-                // 한 줄 꼬임 방지 서브 검색
                 let techIdx = fullText.indexOf("설치기사");
                 if (techIdx !== -1) {
                     let subStr = fullText.substring(techIdx, techIdx + 20);
@@ -179,7 +194,7 @@
                 }
             }
 
-            // 🕵️‍♂️ [보안 패치 2] 고객명 정밀 추출
+            // 🕵️‍♂️ 고객명 정밀 추출
             let customerName = "미확인";
             const customerMatch = fullText.match(/고객명\s*([가-힣]{2,4})/i) || fullText.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
             if (customerMatch && customerMatch[1] && !["연락처", "설치"].includes(customerMatch[1])) {
@@ -196,16 +211,14 @@
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            // 🕵️‍♂️ [보안 패치 3] 에어컨 진짜 단품 모델명 매칭 정규식
-            // .AKOR 앞부분이 정확히 N, U, J 로 끝나는 텍스트 패턴만 수집
-            const matchedWords = fullText.match(/[A-Z]{2,4}\d{2,4}[A-Z0-9-]*[NUJ]\.AKOR/g) || [];
+            // 진짜 에어컨 모델명 양식 추출 (.AKOR 형식 타겟팅)
+            const matchedWords = fullText.match(/[A-Z]{2,4}\d{2,4}[A-Z0-9-]*\.AKOR/g) || [];
 
             for (let word of matchedWords) {
-                // .AKOR 앞의 순수 모델명만 추출 (예: FQ20VDWHAN)
                 let finalModel = word.split('.')[0].trim();
 
-                // 날짜 오독 및 5자 미만 찌꺼기 차단
-                if (finalModel.includes('2026') || finalModel.length < 5) continue;
+                // 날짜 정보 및 비정상 글자 원천 제외
+                if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
 
                 if (!seenModels.has(finalModel)) {
                     seenModels.add(finalModel);
