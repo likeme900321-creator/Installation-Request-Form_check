@@ -124,7 +124,7 @@
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (세트 구역 파쇄 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (단품 완제품 추출 특화 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -158,29 +158,12 @@
             await currentRenderTask.promise;
             currentRenderTask = null; 
 
-            // 텍스트 추출 및 공백 정규화
+            // 텍스트 추출 및 전처리
             const textContent = await page.getTextContent();
-            let rawItems = textContent.items.map(item => (item.str || "").trim());
-            
-            // 💡 [핵심 패치] '세트모델명' 텍스트 구역 원천 차단 알고리즘
-            // PDF 안에 들어있는 모든 단어들을 검사하면서 '세트'라는 말이 나오면 
-            // 해당 단어와 바로 다음에 붙어오는 모델명 단어까지 리스트에서 완전히 지워버립니다.
-            let cleanItems = [];
-            for (let i = 0; i < rawItems.length; i++) {
-                let item = rawItems[i].toUpperCase();
-                if (item.includes("세트") || item.includes("SET")) {
-                    // 세트명 문구와 그 뒤에 따라오는 모델명 코드(.AKOR 포함된 것)까지 강제 건너뛰기
-                    if (i + 1 < rawItems.length && (rawItems[i+1].toUpperCase().includes("AKOR") || /[A-Z0-9]/.test(rawItems[i+1]))) {
-                        i++; 
-                    }
-                    continue;
-                }
-                cleanItems.push(rawItems[i]);
-            }
+            let fullText = textContent.items.map(item => item.str || "").join(" ");
+            fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
 
-            let fullText = cleanItems.join(" ").replace(/\s+/g, " ").trim().toUpperCase();
-
-            // 🕵️‍♂️ 기사명 정밀 추출
+            // 🕵️‍♂️ 기사명 정밀 추출 (인덱스 역추적 기법)
             let technicianName = "미지정";
             const techMatch = fullText.match(/설치기사\s*([가-힣]{2,4})/i) || fullText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
             if (techMatch && techMatch[1]) {
@@ -188,7 +171,7 @@
             } else {
                 let techIdx = fullText.indexOf("설치기사");
                 if (techIdx !== -1) {
-                    let subStr = fullText.substring(techIdx, techIdx + 20);
+                    let subStr = fullText.substring(techIdx, techIdx + 30);
                     let nameMatch = subStr.match(/([가-힣]{2,4})/g);
                     if (nameMatch && nameMatch[1]) technicianName = nameMatch[1];
                 }
@@ -197,27 +180,31 @@
             // 🕵️‍♂️ 고객명 정밀 추출
             let customerName = "미확인";
             const customerMatch = fullText.match(/고객명\s*([가-힣]{2,4})/i) || fullText.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
-            if (customerMatch && customerMatch[1] && !["연락처", "설치"].includes(customerMatch[1])) {
+            if (customerMatch && customerMatch[1] && !["연락처", "설치", "협력"].includes(customerMatch[1])) {
                 customerName = customerMatch[1].trim();
             } else {
                 let custIdx = fullText.indexOf("고객명");
                 if (custIdx !== -1) {
-                    let subStr = fullText.substring(custIdx, custIdx + 20);
+                    let subStr = fullText.substring(custIdx, custIdx + 30);
                     let nameMatch = subStr.match(/([가-힣]{2,4})/g);
-                    if (nameMatch && nameMatch[1] && nameMatch[1] !== "연락처") customerName = nameMatch[1];
+                    if (nameMatch && nameMatch[1] && !["연락처", "설치"].includes(nameMatch[1])) customerName = nameMatch[1];
                 }
             }
 
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            // 진짜 에어컨 모델명 양식 추출 (.AKOR 형식 타겟팅)
-            const matchedWords = fullText.match(/[A-Z]{2,4}\d{2,4}[A-Z0-9-]*\.AKOR/g) || [];
+            // 🎯 [철벽 필터 핵심 정규식]
+            // LG 에어컨의 실물 단품 모델명은 .AKOR 바로 앞글자가 무조건 '알파벳'으로 끝납니다. (예: ...HAN.AKOR, ...WAU.AKOR, ...WBJ.AKOR)
+            // 반면 세트 모델명은 .AKOR 바로 앞글자가 무조건 '숫자'입니다. (예: ...WHM2.AKOR, ...ED2.AKOR)
+            // 따라서 .AKOR 바로 앞에 알파벳([A-Z])이 오는 진짜 단품 패턴만 콕 집어 수집합니다.
+            const realAirconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9-]*[A-Z]\.AKOR/g;
+            const matchedWords = fullText.match(realAirconPattern) || [];
 
             for (let word of matchedWords) {
                 let finalModel = word.split('.')[0].trim();
 
-                // 날짜 정보 및 비정상 글자 원천 제외
+                // 날짜(2026), 자재부품(PQ) 코드는 원천 제외
                 if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
 
                 if (!seenModels.has(finalModel)) {
@@ -228,7 +215,7 @@
 
             currentPageTargetModels = uniqueProducts.map(p => p.model);
 
-            // 화면 UI 출력 구성
+            // 화면 UI 렌더링
             let htmlContent = `
                 <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
                     👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
@@ -258,7 +245,7 @@
 
         } catch (err) {
             if (err.name === 'RenderingCancelledException') {
-                console.log('이전 렌더링 작업 정상 취소');
+                console.log('이전 작업 정상 취소');
             } else {
                 console.error("동기화 실패:", err);
                 pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 중 에러 발생`;
