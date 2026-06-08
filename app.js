@@ -1,218 +1,271 @@
-// PDF.js 기본 워커 설정
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+<script>
+        // PDF.js 워커 엔진 설정
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-let pdfTextContent = ""; 
-let targetModels = [];   
+        let pdfDoc = null;          
+        let currentPdfPage = 1;     
+        let totalPdfPages = 0;      
+        let currentPageTargetModels = []; 
+        let currentRenderTask = null;
 
-// ==========================================
-// 1. PDF 로드 및 핵심 데이터 파싱
-// ==========================================
-document.getElementById("pdfFile").addEventListener("change", async function (e) {
-    const file = e.target.files[0];
-    if (!file) return;
+        // [1] 파일 선택 시 최초 구동
+        document.getElementById("pdfFile").addEventListener("change", function (e) {
+            const file = e.target.files[0];
+            if (!file) return;
 
-    const orderList = document.getElementById("orderList");
-    orderList.innerHTML = "<li>설치의뢰서 분석 중...</li>";
+            const pageIndicator = document.getElementById("pageIndicator");
+            pageIndicator.innerText = "📄 대량 의뢰서 로딩 및 페이지 분할 중...";
 
-    const fileReader = new FileReader();
-    fileReader.onload = async function () {
-        const typedarray = new Uint8Array(this.result);
-        try {
-            const pdf = await pdfjsLib.getDocument(typedarray).promise;
-            const page = await pdf.getPage(1);
-            const canvas = document.getElementById("pdfViewer");
-            const context = canvas.getContext("2d");
-            const viewport = page.getViewport({ scale: 1.2 }); 
-
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-            canvas.style.display = "block";
-            await page.render({ canvasContext: context, viewport: viewport }).promise;
-
-            const textData = await page.getTextContent();
-            
-            // PDF 텍스트 정제 (줄바꿈, 공백 제거)
-            const textItems = textData.items.map(item => {
-                return item.str.replace(/[\r\n\t"']/g, '').trim();
-            }).filter(item => item !== "");
-
-            pdfTextContent = textItems.join(" ");
-
-            let orderItems = [];
-            targetModels = [];
-
-            // 📋 주문 품목 추출 루프
-            for (let i = 0; i < textItems.length; i++) {
-                const item = textItems[i];
-                const upperItem = item.toUpperCase();
-
-                // 영어와 숫자가 혼합된 품목/자재 코드 형태 감지
-                if (/^[A-Z0-9._-]+$/i.test(upperItem)) {
+            const fileReader = new FileReader();
+            fileReader.onload = async function () {
+                const typedarray = new Uint8Array(this.result);
+                try {
+                    const loadingTask = pdfjsLib.getDocument({
+                        data: typedarray,
+                        cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/cmaps/',
+                        cMapPacked: true
+                    });
                     
-                    // 🛑 [자재 차단] PQ로 시작하는 코드는 자재명이므로 무조건 제외!
-                    if (upperItem.startsWith('PQ')) {
-                        continue; 
-                    }
+                    pdfDoc = await loadingTask.promise;
+                    totalPdfPages = pdfDoc.numPages; 
+                    currentPdfPage = 1; 
+                    
+                    // 첫 페이지 연동 로드
+                    await loadAndRenderPage(currentPdfPage);
 
-                    // 순수 숫자(주문번호 등)나 너무 짧은 텍스트는 패스
-                    if (upperItem.length < 5 || /^\d+$/.test(upperItem)) {
-                        continue;
-                    }
+                } catch (error) {
+                    console.error("PDF 초기 로드 에러:", error);
+                    alert("⚠️ 의뢰서 파일 구조를 읽지 못했습니다. 캐시를 삭제하고 다시 시도해 주세요.");
+                }
+            };
+            fileReader.readAsArrayBuffer(file);
+        });
 
-                    // 순수 주문번호 형태(예: 1123432721-10.1)도 패스
-                    if (/^\d+-\d+/.test(upperItem)) {
-                        continue;
-                    }
+        // [2] 🔄 현재 페이지에 맞게 [이미지 + 기사명 + 주문품목]을 일괄 변경하는 마스터 함수
+        async function loadAndRenderPage(pageNumber) {
+            if (!pdfDoc) return;
 
-                    let quantity = "1"; 
-                    let orderType = "미확인";
-                    let location = "공란(미지정)";
+            // 1. 페이지가 바뀔 때마다 하단 입력창 및 결과 화면 깨끗하게 리셋
+            document.getElementById("manualInput").value = "";
+            document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>";
+            document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
+            currentPageTargetModels = []; 
 
-                    // 현재 아이템 인근에서 '일반' 단어와 수량 매칭
-                    for (let j = Math.max(0, i - 2); j < Math.min(textItems.length, i + 15); j++) {
-                        if (textItems[j].includes("일반") || textItems[j].includes("특수")) {
-                            orderType = "일반";
-                            
-                            if (textItems[j-1] && /^[1-9]$/.test(textItems[j-1])) quantity = textItems[j-1];
-                            else if (textItems[j-2] && /^[1-9]$/.test(textItems[j-2])) quantity = textItems[j-2];
-                            else if (textItems[j+1] && /^[1-9]$/.test(textItems[j+1])) quantity = textItems[j+1];
-                            break;
-                        }
-                    }
+            const canvas = document.getElementById("pdfCanvas");
+            const ctx = canvas.getContext("2d");
+            const pageIndicator = document.getElementById("pageIndicator");
+            const orderList = document.getElementById("orderList");
 
-                    // 원주문구분이 '일반'인 진짜 완제품 에어컨 모델명(SQ... 등)만 등록
-                    if (orderType === "일반") {
-                        let cleanModel = upperItem.split('.')[0].trim();
+            // 연타 시 비동기 충돌 방지를 위해 이전 렌더링 강제 취소
+            if (currentRenderTask) {
+                currentRenderTask.cancel();
+                currentRenderTask = null;
+            }
+
+            // 캔버스 메모리 비우기 및 초기화
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.width = 0;
+            canvas.height = 0;
+
+            try {
+                const page = await pdfDoc.getPage(pageNumber);
+                
+                // 모바일 가독성을 위해 1.5배 선명하게 드로잉
+                const viewport = page.getViewport({ scale: 1.5 });
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: viewport
+                };
+                
+                currentRenderTask = page.render(renderContext);
+                await currentRenderTask.promise;
+                currentRenderTask = null; 
+
+                // 2. 텍스트 추출 및 기호 공백 정제
+                const textContent = await page.getTextContent();
+                let fullText = textContent.items.map(item => item.str || "").join(" ");
+                fullText = fullText.replace(/[\r\n\t"']/g, " ").trim();
+
+                // 🕵️‍♂️ 기사명 추출
+                let technicianName = "미지정";
+                const techMatch = fullText.match(/설치기사\s+([가-힣]{2,4})/);
+                if (techMatch && techMatch[1]) {
+                    technicianName = techMatch[1];
+                }
+
+                // 🕵️‍♂️ 고객명 추출
+                let customerName = "미확인";
+                const customerMatch = fullText.match(/고객명\s+([가-힣]{2,4})/);
+                if (customerMatch && customerMatch[1]) {
+                    customerName = customerMatch[1];
+                }
+
+                // 📋 [패턴 수정 완료] 공백 기준 단어 배열 분할 추출 기법
+                const words = fullText.split(/\s+/);
+                let uniqueProducts = [];
+                let seenModels = new Set();
+
+                for (let word of words) {
+                    let cleanWord = word.replace(/,/g, '').trim().toUpperCase();
+                    
+                    // 💡 핵심 버그 해결: .AKOR를 포함하여 완제품 에어컨 양식(SQ, FQ 등)을 정확히 스캔
+                    if (cleanWord.includes('AKOR') || /^[A-Z]{2,4}\d{2,4}[A-Z0-9]+/.test(cleanWord)) {
                         
-                        // 한번 더 PQ 자재 필터링 검증
-                        if (!cleanModel.startsWith('PQ')) {
-                            targetModels.push(cleanModel);
-                            orderItems.push({
-                                model: cleanModel,
-                                qty: quantity,
-                                type: orderType,
-                                loc: location
+                        if (cleanWord.startsWith('PQ')) continue; // 자재/부품 코드 제외
+                        if (cleanWord.includes('202606')) continue; // 발행일 날짜 제외
+
+                        // 검수 대조를 간결하게 하기 위해 뒤에 붙은 .AKOR는 떼고 순수 모델명만 사용
+                        let finalModel = cleanWord.split('.')[0].trim();
+
+                        if (finalModel.length >= 5 && !seenModels.has(finalModel)) {
+                            seenModels.add(finalModel);
+                            uniqueProducts.push({
+                                model: finalModel,
+                                qty: "1"
                             });
                         }
                     }
                 }
-            }
 
-            // 모델명 중복 제거
-            targetModels = [...new Set(targetModels)];
+                // 세트모델명(SQ07GJ1WES 등) 구역에 별도로 적힌 완제품이 있다면 추가로 수집
+                const setModelMatch = fullText.match(/세트모델명\s*:\s*([A-Z0-9]+)/);
+                if (setModelMatch && setModelMatch[1]) {
+                    let setModel = setModelMatch[1].split('.')[0].trim().toUpperCase();
+                    if (setModel !== "" && !seenModels.has(setModel) && !setModel.startsWith('PQ')) {
+                        seenModels.add(setModel);
+                        uniqueProducts.push({ model: setModel, qty: "1" });
+                    }
+                }
 
-            // ==========================================
-            // 화면 최종 렌더링
-            // ==========================================
-            if (orderItems.length > 0) {
-                let htmlContent = ""; 
-                
-                orderItems.forEach((prod, index) => {
-                    htmlContent += `
-                        <li style="margin-bottom: 15px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 10px; list-style:none;">
-                            <b style="color:#4f46e5; font-size:15px;">📋 [주문 품목 ${index + 1}]</b><br><br>
-                            • <b>1. 모델명 :</b> <span style="color:#b91c1c; font-weight:bold; font-size:16px;">${prod.model}</span><br>
-                            • <b>2. 수량 :</b> <span style="font-weight:bold;">${prod.qty}</span> 개<br>
-                            • <b>3. 원주문구분 :</b> <span style="background:#fef08a; padding:1px 4px; border-radius:3px; font-weight:bold;">${prod.type}</span><br>
-                            • <b>4. 제품위치 :</b> <span style="color:#64748b;">${prod.loc}</span>
-                        </li>`;
-                });
+                // 현재 페이지 전용 스캔 대조군 배열 완성
+                currentPageTargetModels = uniqueProducts.map(p => p.model);
+
+                // 3. 우측 정보창 UI를 현재 페이지 내용으로 통째로 리렌더링
+                let htmlContent = `
+                    <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
+                        👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
+                    </div>
+                    <div style="margin-bottom: 10px; font-size:14px; color:#334155;">
+                        👤 <b>고객명:</b> ${customerName} 고객님
+                    </div>
+                    <div style="font-weight:bold; margin-top:15px; margin-bottom:5px; font-size:13px; color:#4f46e5;">[주문 품목 리스트]</div>
+                `;
+
+                if (uniqueProducts.length === 0) {
+                    htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정된 일반 완제품 품목이 없습니다.</div>`;
+                } else {
+                    uniqueProducts.forEach((prod, idx) => {
+                        htmlContent += `
+                            <div style="margin-bottom: 8px; border:1px solid #e2e8f0; padding:10px; border-radius:6px; background:white;">
+                                • <b>모델 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
+                                <span style="float:right; color:#1e293b; font-weight:bold;">${prod.qty} 개</span>
+                            </div>
+                        `;
+                    });
+                }
                 
                 orderList.innerHTML = htmlContent;
-                document.getElementById("status").innerText = `확인완료 0 / ${targetModels.length}`;
+                
+                // 페이지 카운터 연동 (예: 1 / 5 장)
+                pageIndicator.innerText = `의뢰서 건수: ${pageNumber} / ${totalPdfPages} 장`;
+                document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (품목: ${currentPageTargetModels.length}개)</span>`;
+
+            } catch (err) {
+                if (err.name === 'RenderingCancelledException') {
+                    console.log('이전 페이지 작업 정상 취소');
+                } else {
+                    console.error("페이지 로딩 실패:", err);
+                    pageIndicator.innerText = `⚠️ ${pageNumber}페이지 로딩 중 에러 발생`;
+                }
+            }
+        }
+
+        // [3] 이전장 버튼 클릭시 자동 연동
+        document.getElementById("prevPageBtn").addEventListener("click", async function () {
+            if (!pdfDoc) return;
+            if (currentPdfPage > 1) {
+                currentPdfPage--;
+                await loadAndRenderPage(currentPdfPage);
             } else {
-                orderList.innerHTML = `
-                    <li style="list-style:none; background:#f1f5f9; padding:15px; border-radius:6px; color:#475569;">
-                        ⚠️ 검수 대상 제품(원주문구분: 일반)이 없거나 자재 코드만 존재하여 등록된 품목이 없습니다.
-                    </li>`;
-                document.getElementById("status").innerText = `확인완료 0 / 0`;
+                alert("첫 번째 의뢰서 페이지입니다.");
             }
-
-        } catch (error) {
-            console.error(error);
-            orderList.innerHTML = "<li>설치의뢰서 양식 파싱 오류가 발생했습니다.</li>";
-        }
-    };
-    fileReader.readAsArrayBuffer(file);
-});
-
-// ==========================================
-// 2. 사진 촬영 시 자동 글자 읽기 기능 (100% 매칭 기준 검증)
-// ==========================================
-document.getElementById("cameraInput").addEventListener("change", async function (e) {
-    const photoFile = e.target.files[0];
-    if (!photoFile) return;
-
-    const manualInput = document.getElementById("manualInput");
-    const ocrResultDiv = document.getElementById("ocrResult");
-    
-    // 분석 시작 시 초기화
-    manualInput.value = "";
-    ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 스티커 모델명 판독 중...</span>";
-
-    try {
-        const result = await Tesseract.recognize(photoFile, 'eng', {
-            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
         });
-        
-        // 인식된 문자열에서 모든 공백 및 줄바꿈을 제거하고 대문자로 통일
-        let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
-        
-        let isMatched = false;
-        let matchedModel = "";
 
-        // 💡 [기사님 요청 반영]: 의뢰서 모델명이 사진 판독 글자 안에 100% 정확히 녹아있는지 검사
-        for (let model of targetModels) {
-            if (detectedText.includes(model)) {
-                isMatched = true;
-                matchedModel = model;
-                break;
+        // [4] 다음장 버튼 클릭시 자동 연동
+        document.getElementById("nextPageBtn").addEventListener("click", async function () {
+            if (!pdfDoc) return;
+            if (currentPdfPage < totalPdfPages) {
+                currentPdfPage++;
+                await loadAndRenderPage(currentPdfPage);
+            } else {
+                alert("마지막 의뢰서 페이지입니다.");
             }
-        }
+        });
 
-        if (isMatched) {
-            // 100% 일치하는 모델명이 있을 때만 입력란에 값을 연동시킵니다.
-            manualInput.value = matchedModel;
-            ocrResultDiv.innerHTML = `<span style="color: green; font-weight: bold;">✅ 인식 성공 (${matchedModel})! [검수] 버튼을 누르세요.</span>`;
-        } else {
-            // 100% 일치하지 않으면 빈칸으로 두고 화면에 불일치 경고를 명시합니다.
+        // [5] 사진 스캔 판독 (오직 현재 화면 품목과 크로스 체크)
+        document.getElementById("cameraInput").addEventListener("change", async function (e) {
+            const photoFile = e.target.files[0];
+            if (!photoFile) return;
+
+            const manualInput = document.getElementById("manualInput");
+            const ocrResultDiv = document.getElementById("ocrResult");
+            
             manualInput.value = "";
-            ocrResultDiv.innerHTML = `<span style="color: red; font-weight: bold;">❌ 의뢰서와 모델명 불일치 (직접 입력 가능)</span>`;
-        }
+            ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 페이지 정보와 대조 중...</span>";
 
-    } catch (err) {
-        console.error(err);
-        ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (모델명 수동 입력 검수 가능)</span>";
-    }
-});
+            try {
+                const result = await Tesseract.recognize(photoFile, 'eng', {
+                    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+                });
+                
+                let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
+                let isMatched = false;
+                let matchedModel = "";
 
-// ==========================================
-// 3. 검수 버튼 클릭 (최종 매칭)
-// ==========================================
-document.getElementById("checkBtn").addEventListener("click", function () {
-    const manualInput = document.getElementById("manualInput");
-    const statusDiv = document.getElementById("status");
-    const modelToCompare = manualInput.value.trim().toUpperCase();
+                for (let model of currentPageTargetModels) {
+                    if (detectedText.includes(model)) {
+                        isMatched = true;
+                        matchedModel = model;
+                        break;
+                    }
+                }
 
-    if (modelToCompare === "") {
-        alert("바코드 사진 인식이 불일치했거나 입력창이 비어있습니다. 모델명을 직접 확인 후 입력해 주세요.");
-        return;
-    }
+                if (isMatched) {
+                    manualInput.value = matchedModel;
+                    ocrResultDiv.innerHTML = `<span style="color: green; font-weight: bold;">✅ 현재 의뢰서와 일치 (${matchedModel})! 검수를 확정하세요.</span>`;
+                } else {
+                    manualInput.value = "";
+                    ocrResultDiv.innerHTML = `<span style="color: red; font-weight: bold;">❌ 현재 화면(기사님 품목)에 없는 제품 바코드입니다.</span>`;
+                }
 
-    // 자재 차단 안전장치 (PQ 차단)
-    if (modelToCompare.startsWith('PQ')) {
-        alert("❌ PQ로 시작하는 코드는 자재 부품이므로 검수 대상이 아닙니다.");
-        return;
-    }
+            } catch (err) {
+                console.error(err);
+                ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (수동 입력 가능)</span>";
+            }
+        });
 
-    // 최종 확정 대조 (배열에 100% 존재하는지 한 번 더 체크)
-    const isFinalCheckPassed = targetModels.includes(modelToCompare);
+        // [6] 검수 확정 버튼
+        document.getElementById("checkBtn").addEventListener("click", function () {
+            const manualInput = document.getElementById("manualInput");
+            const statusDiv = document.getElementById("status");
+            const modelToCompare = manualInput.value.trim().toUpperCase();
 
-    if (isFinalCheckPassed) {
-        alert(`✅ 검수 성공!\n의뢰서 정보와 일치합니다: ${modelToCompare}`);
-        statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">확인완료 1 / ${targetModels.length} (일치: ${modelToCompare})</span>`;
-    } else {
-        alert(`❌ 검수 실패!\n검수 대상 품목 목록에 [${modelToCompare}] 제품이 존재하지 않습니다.`);
-        statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">미일치 제품 발견</span>`;
-    }
-});
+            if (modelToCompare === "") {
+                alert("모델명을 직접 입력하거나 사진을 다시 찍어주세요.");
+                return;
+            }
+
+            const isFinalCheckPassed = currentPageTargetModels.includes(modelToCompare);
+
+            if (isFinalCheckPassed) {
+                alert(`✅ 검수 성공!\n현재 화면의 자재가 맞습니다: ${modelToCompare}`);
+                statusDiv.innerHTML = `<span style="color: green; font-weight: bold;">일치 확인완료 (${modelToCompare})</span>`;
+            } else {
+                alert(`❌ 검수 불일치!\n현재 활성화된 기사님 품목 리스트에는 [${modelToCompare}]가 없습니다.`);
+                statusDiv.innerHTML = `<span style="color: red; font-weight: bold;">⚠️ 미일치 제품 스캔됨</span>`;
+            }
+        });
+    </script>
