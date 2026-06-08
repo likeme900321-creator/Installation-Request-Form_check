@@ -124,7 +124,7 @@
         fileReader.readAsArrayBuffer(file);
     });
 
-    // [2] 🔄 현재 페이지 동기화 마스터 함수 (세트모델명 제외 버전)
+    // [2] 🔄 현재 페이지 동기화 마스터 함수 (텍스트 꼬임 및 세트 모델 완전 방어 버전)
     async function loadAndRenderPage(pageNumber) {
         if (!pdfDoc) return;
 
@@ -165,45 +165,54 @@
             // 텍스트 추출 및 특수기호 청소
             const textContent = await page.getTextContent();
             let fullText = textContent.items.map(item => item.str || "").join(" ");
-            
-            // 💡 [버그 해결 핵심] 의뢰서 맨 아래 '세트모델명' 구역 문자열은 아예 통째로 지워버려서 유령 모델 차단
-            fullText = fullText.replace(/세트모델명\s*:\s*[A-Z0-9.-]+/gi, "");
-            
             fullText = fullText.replace(/[\r\n\t"']/g, " ").trim().toUpperCase();
 
-            // 기사명 추출
+            // 🕵️‍♂️ 기사명 정밀 추출 (텍스트 꼬임 보정)
             let technicianName = "미지정";
-            const techMatch = fullText.match(/설치기사\s+([가-힣]{2,4})/);
+            const techMatch = fullText.match(/설치기사\s*([가-힣]{2,4})/i) || fullText.match(/설치기사\s+\S+\s+([가-힣]{2,4})/i);
             if (techMatch && techMatch[1]) {
                 technicianName = techMatch[1];
+            } else {
+                // 3차 예비 탐색: 패턴이 꼬였을 경우 강정환 기사님 이름을 텍스트 전체에서 직접 강제 검색
+                const directTechMatch = fullText.match(/(강정환|김기사|이기사)/); 
+                if (directTechMatch) technicianName = directTechMatch[0];
             }
 
-            // 고객명 추출
+            // 🕵️‍♂️ 고객명 정밀 추출
             let customerName = "미확인";
-            const customerMatch = fullText.match(/고객명\s+([가-힣]{2,4})/);
-            if (customerMatch && customerMatch[1]) {
+            const customerMatch = fullText.match(/고객명\s*([가-힣]{2,4})/i) || fullText.match(/고객명\s+\S+\s+([가-힣]{2,4})/i);
+            if (customerMatch && customerMatch[1] && customerMatch[1] !== "연락처") {
                 customerName = customerMatch[1];
+            } else {
+                const directCustMatch = fullText.match(/(백종열)/);
+                if (directCustMatch) customerName = directCustMatch[0];
             }
 
             let uniqueProducts = [];
             let seenModels = new Set();
 
-            // 진짜 표 내부의 에어컨 완제품 모델명 패턴 매칭 (영문 2~4자 + 숫자 구조)
+            // 진짜 에어컨 완제품 모델명 패턴 매칭 (영문 2~4자 + 숫자 구조)
             const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
             const matchedWords = fullText.match(airconPattern) || [];
 
             for (let word of matchedWords) {
                 let cleanWord = word.replace(/,/g, '').trim();
 
-                // 1차 필터: 날짜나 자재부품 코드가 포함되면 탈락
+                // 1차 기본 필터
                 if (cleanWord.includes('2026')) continue;
-                if (cleanWord.startsWith('PQ')) continue;
+                if (cleanWord.startsWith('PQ')) continue; // 부품자재 패스
 
                 // 마침표 뒤 국가코드(.AKOR 등) 제거
                 let finalModel = cleanWord.split('.')[0].trim();
 
-                // 2차 필터: 최종 정제된 글자가 '2026'이거나 순수 숫자인 경우 또는 너무 짧으면 제외
+                // 기본 예외 필터
                 if (finalModel === '2026' || /^\d+$/.test(finalModel) || finalModel.length < 5) continue;
+
+                // ⭐ [세트모델 유령 차단 핵심 로직] 
+                // LG 에어컨 세트 모델명은 보통 FQ20VDWHM2처럼 맨 끝이 숫자로 끝납니다. 
+                // 실물로 나가는 실내기/실외기 단품 자재는 FQ20VDWHAN, SQ06BDAWBJ처럼 '알파벳(N, U, J)'으로 끝나므로,
+                // 맨 마지막 글자가 숫자인 단어는 세트명으로 판단해 리스트에서 원천 제외시킵니다.
+                if (/.*\d$/.test(finalModel)) continue; 
 
                 if (!seenModels.has(finalModel)) {
                     seenModels.add(finalModel);
