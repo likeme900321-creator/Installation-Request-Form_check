@@ -33,7 +33,7 @@
 
     <div class="card" style="background: #edf2f7; border-color: #cbd5e1; display: flex; gap: 8px; align-items: center;">
         <label for="techSearchInput" style="font-size: 14px; font-weight: bold; color: #2d3748; white-space: nowrap;">👷 기사명 검색:</label>
-        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력 (예: 강정환)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
+        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력 (예: 홍길동)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
         <button id="searchBtn" style="padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">검색</button>
         <button id="clearSearchBtn" style="padding: 8px 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">전체</button>
     </div>
@@ -51,7 +51,7 @@
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
-        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 사진 매칭</label>
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 모델명 사진 매칭</label>
         <input type="file" id="cameraInput" accept="image/*" capture="environment" class="btn btn-secondary" style="padding: 8px;">
         <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">스캔 대기 중...</div>
     </div>
@@ -79,7 +79,307 @@
     let currentRenderTask = null;
 
     // 💡 다온 ENG 실제 기사님 이름 마스터 데이터베이스 (오인식 원천 봉쇄용)
-    const KNOWN_TECHNICIANS = ["강정환", "이의진", "홍창표"];
+    const KNOWN_TECHNICIANS = ["강정환", "강진수", "공병철" , "국승욱" , "김영금" , "김응돌" , "김지흥" , "김남률" , "민지운" , "박건우" , "박은철" , "박종덕" , "박종선" , "배철옥" , "백인수" , "손성훈" , "안종수" , "양호진" , "우준혁" , "유경민" , "이동하" , "이대흥" , "이성우" , "이승호" , "이시복" , "이용신" , "이철훈" , "전용호" , "정권" , "정승백" , "정승영" , "정한주" , "정호진" , "조운형" , "주세환" , "주병윤" , "진호관" , "채건병" , "천명석" , "최병일" , "최정규" , "홍창표"];
 
     // [1] 파일 선택 등록 구역
-    document.getElementById("pdf
+    document.getElementById("pdfFile").addEventListener("change", function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const pageIndicator = document.getElementById("pageIndicator");
+        pageIndicator.innerText = "📄 의뢰서 문서를 불러오는 중...";
+
+        const fileReader = new FileReader();
+        fileReader.onload = async function () {
+            const typedarray = new Uint8Array(this.result);
+            try {
+                const loadingTask = pdfjsLib.getDocument({
+                    data: typedarray,
+                    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/cmaps/',
+                    cMapPacked: true
+                });
+                
+                pdfDoc = await loadingTask.promise;
+                totalPdfPages = pdfDoc.numPages; 
+                currentPdfPage = 1; 
+                
+                await loadAndRenderPage(currentPdfPage);
+
+            } catch (error) {
+                console.error(error);
+                alert("⚠️ PDF를 불러오지 못했습니다. 새로고침 후 다시 해보세요.");
+            }
+        };
+        fileReader.readAsArrayBuffer(file);
+    });
+
+    // [2] 🔄 화면 및 도면 강제 리렌더링 코어 함수
+    async function loadAndRenderPage(pageNumber) {
+        if (!pdfDoc) return;
+
+        document.getElementById("manualInput").value = "";
+        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>";
+        document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
+        currentPageTargetModels = []; 
+
+        const canvas = document.getElementById("pdfCanvas");
+        const ctx = canvas.getContext("2d");
+        const pageIndicator = document.getElementById("pageIndicator");
+        const orderList = document.getElementById("orderList");
+
+        if (currentRenderTask) {
+            try { currentRenderTask.cancel(); } catch(c){}
+            currentRenderTask = null;
+        }
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        try {
+            const page = await pdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({ scale: 1.2 });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            const renderContext = { canvasContext: ctx, viewport: viewport };
+            currentRenderTask = page.render(renderContext);
+            await currentRenderTask.promise;
+            currentRenderTask = null; 
+
+            // 텍스트 추출 및 불순물 제거 (단어 간 공백은 유지)
+            const textContent = await page.getTextContent();
+            let pageText = textContent.items.map(item => item.str || "").join(" ");
+            
+            // 줄바꿈, 탭, 따옴표, 쉼표 등의 유령 특수문자 전면 소독
+            pageText = pageText.replace(/[\r\n\t,`"'’“]|\s+/g, " ").trim();
+
+            // 🎯 [완전 개조] 1. 기사명 추출: "고객명"을 철저히 거르고 진짜 기사명과 대조 검증
+            let technicianName = "미지정";
+            
+            // 공백을 제거한 텍스트에서 실제 알고 있는 기사님 이름이 들어있는지 직접 검사
+            let compressedText = pageText.replace(/\s+/g, "");
+            for (let tech of KNOWN_TECHNICIANS) {
+                if (compressedText.includes("설치기사" + tech) || compressedText.includes(tech)) {
+                    technicianName = tech;
+                    break;
+                }
+            }
+
+            // 만약 마스터 리스트에 없는 새 기사님일 경우 안전장치 필터 작동
+            if (technicianName === "미지정") {
+                let techMatch = pageText.match(/설치기사\s+([가-힣]{2,4})/i) || pageText.match(/설치기사([가-힣]{2,4})/i);
+                if (techMatch && techMatch[1] && !["고객명", "설치", "연락", "협력"].includes(techMatch[1])) {
+                    technicianName = techMatch[1].trim();
+                }
+            }
+
+            // 🎯 2. 고객명 추출: 기사명과 확실하게 분리
+            let customerName = "미확인";
+            let custIdx = pageText.indexOf("고객명");
+            if (custIdx !== -1) {
+                let sub = pageText.substring(custIdx, custIdx + 30);
+                let names = sub.match(/([가-힣]{2,4})/g);
+                if (names) {
+                    let realCust = names.find(n => !["고객명", "연락처", "전화", "설치", "설치기사", technicianName].includes(n));
+                    if (realCust) customerName = realCust;
+                }
+            }
+
+            // 자재 모델명 추출 구역
+            let uniqueProducts = [];
+            let seenModels = new Set();
+
+            const upperRawText = pageText.toUpperCase();
+            const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
+            const matchedWords = upperRawText.match(airconPattern) || [];
+
+            for (let word of matchedWords) {
+                let cleanWord = word.replace(/,/g, '').trim();
+                let finalModel = cleanWord.split('.')[0].trim();
+
+                if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
+
+                // 세트모델 가짜 유령 데이터 차단막
+                if (finalModel === "FQ20VDWHM2" || finalModel === "FQ17GU2ED2" || finalModel.endsWith("M2") || finalModel.endsWith("D2") || /.*\d$/.test(finalModel)) {
+                    continue; 
+                }
+
+                if (!seenModels.has(finalModel)) {
+                    seenModels.add(finalModel);
+                    uniqueProducts.push({ model: finalModel, qty: "1" });
+                }
+            }
+
+            currentPageTargetModels = uniqueProducts.map(p => p.model);
+
+            // 레이아웃 동적 갱신
+            let htmlContent = `
+                <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
+                    👷 담당기사: <span style="font-size:16px; color:#0284c7;">${technicianName}</span> 기사님
+                </div>
+                <div style="margin-bottom: 10px; font-size:14px; color:#334155;">
+                    👤 <b>고객명:</b> ${customerName} 고객님
+                </div>
+                <div style="font-weight:bold; margin-top:15px; margin-bottom:5px; font-size:13px; color:#4f46e5;">[배정 자재 목록]</div>
+            `;
+
+            if (uniqueProducts.length === 0) {
+                htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정 자재가 없습니다.</div>`;
+            } else {
+                uniqueProducts.forEach((prod, idx) => {
+                    htmlContent += `
+                        <div style="margin-bottom: 8px; border:1px solid #e2e8f0; padding:10px; border-radius:6px; background:white;">
+                            • <b>자재 ${idx + 1}:</b> <span style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
+                            <span style="float:right; color:#1e293b; font-weight:bold;">1 개</span>
+                        </div>
+                    `;
+                });
+            }
+            
+            orderList.innerHTML = htmlContent;
+            pageIndicator.innerText = `의뢰서 위치: ${pageNumber} / ${totalPdfPages} 장`;
+            document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (자재: ${currentPageTargetModels.length}개)</span>`;
+
+        } catch (err) {
+            console.error(err);
+            pageIndicator.innerText = `⚠️ ${pageNumber}페이지 이동 실패`;
+        }
+    }
+
+    // 🚀 [정밀 기사명 탐색 엔진]
+    document.getElementById("searchBtn").addEventListener("click", async function () {
+        let query = document.getElementById("techSearchInput").value.trim();
+        if (!pdfDoc) {
+            alert("의뢰서 PDF 파일을 먼저 올려주세요!");
+            return;
+        }
+        if (query === "") {
+            alert("검색할 기사님 성함을 입력해 주세요.");
+            return;
+        }
+
+        const pageIndicator = document.getElementById("pageIndicator");
+        pageIndicator.innerText = `🔍 문서 내에서 '${query}' 기사님 찾는 중...`;
+
+        let foundPage = -1;
+        
+        for (let p = 1; p <= totalPdfPages; p++) {
+            const page = await pdfDoc.getPage(p);
+            const textContent = await page.getTextContent();
+            let pageText = textContent.items.map(item => item.str || "").join(" ");
+            let compressedText = pageText.replace(/[\s\r\n\t,`"'’“]/g, "");
+            
+            // 입력된 기사 이름이 텍스트에 포함되어 있는지 정확하게 체크
+            if (compressedText.includes("설치기사" + query) || compressedText.includes(query)) {
+                foundPage = p;
+                break; 
+            }
+        }
+
+        if (foundPage !== -1) {
+            currentPdfPage = foundPage;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert(`❌ '${query}' 기사님은 이 의뢰서 문서에 등록되어 있지 않습니다.`);
+            pageIndicator.innerText = `의뢰서 위치: ${currentPdfPage} / ${totalPdfPages} 장`;
+        }
+    });
+
+    // 전체보기 리셋 버튼
+    document.getElementById("clearSearchBtn").addEventListener("click", async function() {
+        document.getElementById("techSearchInput").value = "";
+        if (pdfDoc) {
+            currentPdfPage = 1;
+            await loadAndRenderPage(currentPdfPage);
+        }
+    });
+
+    // [3] 이전장 버튼
+    document.getElementById("prevPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage > 1) {
+            currentPdfPage--;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert("첫 번째 의뢰서 페이지입니다.");
+        }
+    });
+
+    // [4] 다음장 버튼
+    document.getElementById("nextPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage < totalPdfPages) {
+            currentPdfPage++;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert("마지막 의뢰서 페이지입니다.");
+        }
+    });
+
+    // [5] 사진 카메라 연동 스캔
+    document.getElementById("cameraInput").addEventListener("change", async function (e) {
+        const photoFile = e.target.files[0];
+        if (!photoFile) return;
+
+        const manualInput = document.getElementById("manualInput");
+        const ocrResultDiv = document.getElementById("ocrResult");
+        
+        manualInput.value = "";
+        ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 페이지 기사님 자재와 매칭 분석 중...</span>";
+
+        try {
+            const result = await Tesseract.recognize(photoFile, 'eng', {
+                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+                corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/tesseract-core.wasm.js'
+            });
+            
+            let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
+            let isMatched = false;
+            let matchedModel = "";
+
+            for (let model of currentPageTargetModels) {
+                if (detectedText.includes(model)) {
+                    isMatched = true;
+                    matchedModel = model;
+                    break;
+                }
+            }
+
+            if (isMatched) {
+                manualInput.value = matchedModel;
+                ocrResultDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">✅ 일치 확인 (${matchedModel})!</span>`;
+            } else {
+                manualInput.value = "";
+                ocrResultDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">❌ 이 차량 배정 자재가 아닙니다! 확인하세요.</span>`;
+            }
+
+        } catch (err) {
+            console.error(err);
+            ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (수동 입력 필요)</span>";
+        }
+    });
+
+    // [6] 최종 검수 확정 도장
+    document.getElementById("checkBtn").addEventListener("click", function () {
+        const manualInput = document.getElementById("manualInput");
+        const statusDiv = document.getElementById("status");
+        const modelToCompare = manualInput.value.trim().toUpperCase();
+
+        if (modelToCompare === "") {
+            alert("모델명을 직접 입력하거나 사진 스캔을 먼저 해주세요.");
+            return;
+        }
+
+        const isFinalCheckPassed = currentPageTargetModels.includes(modelToCompare);
+
+        if (isFinalCheckPassed) {
+            alert(`✅ 검수 성공!\n현재 기사님의 정상 상차 자재입니다: ${modelToCompare}`);
+            statusDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">상차 완료 승인 (${modelToCompare})</span>`;
+        } else {
+            alert(`❌ 경고! 오상차 위험!\n현재 활성화된 기사님 품목 리스트에는 [${modelToCompare}]가 없습니다.`);
+            statusDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">⚠️ 오상차 위험 품목 감지</span>`;
+        }
+    });
+</script>
+
+</body>
+</html>
