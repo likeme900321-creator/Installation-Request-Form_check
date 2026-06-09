@@ -5,33 +5,31 @@
     <title>Daon E.N.G 통합 검수 시스템</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
-        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .item { padding: 10px; margin-bottom: 5px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-        .checked { background: #d1fae5; text-decoration: line-through; color: #065f46; }
-        input, select { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; }
-        button { padding: 10px 20px; cursor: pointer; background: #2563eb; color: white; border: none; border-radius: 4px; width: 100%; }
+        .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .item { padding: 10px; margin-bottom: 5px; border: 1px solid #ddd; border-radius: 4px; display: flex; justify-content: space-between; }
+        .checked { background: #d1fae5; color: #065f46; text-decoration: line-through; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; box-sizing: border-box; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h2>통합 자재 검수 시스템</h2>
+    <h2>자재 상차 검수</h2>
     <input type="file" id="pdfFile" accept="application/pdf">
-    <input type="text" id="driverSearch" placeholder="기사님 성함을 검색하세요...">
+    <input type="text" id="barcodeInput" placeholder="바코드를 스캔하거나 모델명을 입력하세요">
     <div id="orderList"></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
 <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
-
-    let allExtractedData = [];
+    let masterList = [];
 
     document.getElementById("pdfFile").addEventListener("change", async (e) => {
         const file = e.target.files[0];
         const reader = new FileReader();
         reader.onload = async () => {
             const pdf = await pdfjsLib.getDocument({data: new Uint8Array(reader.result)}).promise;
-            allExtractedData = [];
+            masterList = [];
             
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
@@ -40,35 +38,45 @@
                 
                 if (matches) {
                     matches.forEach(m => {
+                        // 세트 모델명 패턴 (끝이 S이거나, 끝 3자리에 숫자가 포함) 필터
                         if (m.startsWith("PQ") || m.endsWith("S") || /\d/.test(m.slice(-3))) return;
                         
                         let final = m;
                         if (allText.includes(m + ".BKOR")) final = m + ".BKOR";
                         else if (allText.includes(m + ".EKOR")) final = m + ".EKOR";
                         
-                        if (!allExtractedData.includes(final)) allExtractedData.push(final);
+                        if (!masterList.find(item => item.name === final)) {
+                            masterList.push({ name: final, checked: false });
+                        }
                     });
                 }
             }
-            renderList(allExtractedData);
+            renderList();
         };
         reader.readAsArrayBuffer(file);
     });
 
-    function renderList(data) {
+    document.getElementById("barcodeInput").addEventListener("input", (e) => {
+        const val = e.target.value.trim();
+        masterList.forEach(item => {
+            if (item.name === val) {
+                item.checked = true;
+                e.target.value = ""; // 입력창 초기화
+                renderList();
+            }
+        });
+    });
+
+    function renderList() {
         const listDiv = document.getElementById("orderList");
-        const query = document.getElementById("driverSearch").value;
         listDiv.innerHTML = "";
-        
-        data.filter(item => item.includes(query)).sort().forEach(model => {
+        masterList.sort((a,b) => a.name.localeCompare(b.name)).forEach(item => {
             const div = document.createElement("div");
-            div.className = "item";
-            div.innerHTML = `<span>${model}</span> <button onclick="this.classList.add('checked')">확인</button>`;
+            div.className = `item ${item.checked ? 'checked' : ''}`;
+            div.innerHTML = `<span>${item.name}</span> <span>${item.checked ? '✔ 완료' : '대기'}</span>`;
             listDiv.appendChild(div);
         });
     }
-
-    document.getElementById("driverSearch").addEventListener("input", () => renderList(allExtractedData));
 </script>
 </body>
 </html>
