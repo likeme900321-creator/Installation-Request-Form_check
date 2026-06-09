@@ -324,39 +324,36 @@ currentPageTargetModels = uniqueProducts.map(p => p.model);
 
     // [5] 사진 카메라 연동 스캔
 
-    document.getElementById("cameraInput").addEventListener("change", function(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-
+    // 카메라 버튼을 누르면 실시간 스캔 시작
+document.getElementById("cameraInput").addEventListener("click", function() {
     const ocrResultDiv = document.getElementById("ocrResult");
-    const manualInput = document.getElementById("manualInput");
+    ocrResultDiv.innerHTML = "<div id='interactive' class='viewport'></div>";
     
-    ocrResultDiv.innerHTML = "⏳ 바코드 분석 중...";
+    Quagga.init({
+        inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector('#interactive'), // 화면에 카메라 영상 출력
+            constraints: { facingMode: "environment" } // 후면 카메라 자동 선택
+        },
+        decoder: { readers: ["code_128_reader"] }
+    }, function(err) {
+        if (err) { console.error(err); return; }
+        Quagga.start();
+    });
 
-    // 파일 객체를 읽어서 Quagga로 분석
-    const reader = new FileReader();
-    reader.onload = function(event) {
-        Quagga.decodeSingle({
-            decoder: { readers: ["code_128_reader"] }, // 모델명 바코드는 거의 Code 128입니다
-            locate: true,
-            src: event.target.result
-        }, function(result) {
-            if (result && result.codeResult) {
-                const code = result.codeResult.code;
-                
-                // 인식된 코드가 현재 의뢰서의 모델명 리스트에 포함되는지 확인
-                if (currentPageTargetModels.includes(code)) {
-                    manualInput.value = code;
-                    ocrResultDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">✅ 바코드 인식 성공: ${code}</span>`;
-                } else {
-                    ocrResultDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">❌ 이 자재 아님 (인식값: ${code})</span>`;
-                }
-            } else {
-                ocrResultDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">⚠️ 바코드를 읽지 못했습니다. 다시 촬영해 주세요.</span>`;
-            }
-        });
-    };
-    reader.readAsDataURL(file);
+    Quagga.onDetected(function(result) {
+        const code = result.codeResult.code;
+        if (currentPageTargetModels.includes(code)) {
+            document.getElementById("manualInput").value = code;
+            document.getElementById("ocrResult").innerHTML = `✅ 바코드 인식 성공: ${code}`;
+            Quagga.stop(); // 인식되면 카메라 종료
+            document.querySelector('#interactive').innerHTML = ""; 
+        } else {
+            // 인식은 됐지만 리스트에 없는 경우
+            document.getElementById("ocrResult").innerHTML = `⚠️ 인식값(${code})이 목록에 없습니다.`;
+        }
+    });
 });
     
     // [6] 최종 검수 확정 도장
