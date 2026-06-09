@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Daon E.N.G 자재 최종 정리기</title>
+    <title>Daon E.N.G 자재 최종 검수기</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
         .item { background: white; padding: 12px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
@@ -30,18 +30,19 @@
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
-                    const text = (await page.getTextContent()).items.map(it => it.str).join(" ");
+                    // 1. 텍스트를 읽자마자 .AKOR을 몽땅 없애버립니다.
+                    let text = (await page.getTextContent()).items.map(it => it.str).join(" ");
+                    text = text.replace(/\.AKOR/g, ""); 
                     
-                    // 1. 핵심 패턴: SQ 또는 FQ로 시작하는 것만 찾음 (PQ 제외)
-                    // 2. 숫자가 4~10개 정도 붙어있는 자재 모델명을 먼저 추출
-                    const matches = text.match(/(SQ|FQ)[A-Z0-9]{4,10}/g);
+                    // 2. 이제 남은 데이터에서 SQ/FQ 모델명 추출
+                    const matches = text.match(/(SQ|FQ)[A-Z0-9]{4,15}/g);
                     
                     if (matches) {
                         matches.forEach(m => {
-                            // 세트 모델명(숫자가 너무 긴 경우)은 여기서 제외
-                            if (m.length < 12) {
+                            // PQ 제외, 너무 긴 세트명 제외
+                            if (!m.startsWith("PQ") && m.length < 12) {
+                                // 3. 특수 확장자(BKOR, EKOR)가 원래 붙어있던 녀석들만 복구
                                 let finalModel = m;
-                                // 3. 특수한 경우만 확장자를 확인해서 붙임 (.AKOR은 절대 추가 안 함)
                                 if (text.includes(m + ".BKOR")) finalModel = m + ".BKOR";
                                 else if (text.includes(m + ".EKOR")) finalModel = m + ".EKOR";
                                 
