@@ -148,4 +148,65 @@
         currentPageProducts = []; 
 
         const canvas = document.getElementById("pdfCanvas");
-        const ctx = canvas.getContext("2d
+        const ctx = canvas.getContext("2d");
+        
+        if (currentRenderTask) {
+            try { currentRenderTask.cancel(); } catch(c){}
+        }
+
+        try {
+            const page = await pdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({ scale: 1.2 });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            const renderContext = { canvasContext: ctx, viewport: viewport };
+            currentRenderTask = page.render(renderContext);
+            await currentRenderTask.promise;
+            currentRenderTask = null; 
+        } catch (renderErr) {
+            console.error(renderErr);
+        }
+
+        try {
+            const page = await pdfDoc.getPage(pageNumber);
+            const textContent = await page.getTextContent();
+            
+            let rawTexts = [];
+            if (textContent && textContent.items) {
+                for (let i = 0; i < textContent.items.length; i++) {
+                    let item = textContent.items[i];
+                    if (item && item.str) {
+                        let txt = item.str.replace(/\\n/gi, " ")
+                                          .replace(/\\r/gi, " ")
+                                          .replace(/[\"\',]/g, " ")
+                                          .trim();
+                        if (txt) {
+                            rawTexts.push(txt.toUpperCase());
+                        }
+                    }
+                }
+            }
+
+            let combinedText = rawTexts.join(" ");
+            let compressedText = combinedText.replace(/\s+/g, "");
+
+            // 1. 기사명 매칭
+            currentTechnician = "미지정";
+            for (let tech of KNOWN_TECHNICIANS) {
+                if (compressedText.includes("설치기사" + tech) || compressedText.includes(tech)) {
+                    currentTechnician = tech;
+                    break;
+                }
+            }
+
+            // 2. 고객명 매칭
+            currentCustomer = "미확인";
+            let custIdx = combinedText.indexOf("고객명");
+            if (custIdx !== -1) {
+                let sub = combinedText.substring(custIdx, custIdx + 60);
+                let names = sub.match(/([가-힣]{2,4})/g);
+                if (names) {
+                    let realCust = names.find(n => !["고객명", "연락처", "전화", "설치", "설치기사", currentTechnician].includes(n));
+                    if (realCust) currentCustomer = realCust;
+                }
