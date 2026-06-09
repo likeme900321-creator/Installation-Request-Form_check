@@ -102,4 +102,73 @@
     const codeReader = new ZXing.BrowserMultiFormatReader();
     let isScanning = false;
 
-    const KNOWN_TECHNICIANS =
+    const KNOWN_TECHNICIANS = [
+        "강정환", "강진수", "공병철", "국승욱", "김영금", "김응돌", "김지흥", "김태근", 
+        "김남률", "민지운", "박건우", "박은철", "박종덕", "박종선", "배철옥", "백인수", 
+        "손성훈", "안종수", "양호진", "우준혁", "유경민", "이동하", "이대흥", "이성우", 
+        "이승호", "이시복", "이용신", "이철훈", "전용호", "정권", "정승백", "정승영", 
+        "정한주", "정호진", "조운형", "주세환", "주병윤", "진호관", "채건병", "천명석", 
+        "최병일", "최정규", "홍창표"
+    ];
+
+    document.getElementById("pdfFile").addEventListener("change", function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        document.getElementById("pageIndicator").innerText = "📄 의뢰서 문서를 불러오는 중...";
+
+        const fileReader = new FileReader();
+        fileReader.onload = async function () {
+            const typedarray = new Uint8Array(this.result);
+            try {
+                const loadingTask = pdfjsLib.getDocument({
+                    data: typedarray,
+                    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/cmaps/',
+                    cMapPacked: true
+                });
+                pdfDoc = await loadingTask.promise;
+                totalPdfPages = pdfDoc.numPages; 
+                currentPdfPage = 1; 
+                await loadAndRenderPage(currentPdfPage);
+            } catch (error) {
+                console.error(error);
+                alert("⚠️ PDF 파일 구조를 읽을 수 없습니다.");
+            }
+        };
+        fileReader.readAsArrayBuffer(file);
+    });
+
+    async function loadAndRenderPage(pageNumber) {
+        if (!pdfDoc) return;
+
+        document.getElementById("manualInput").value = "";
+        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 바코드를 조준하거나 자재명을 바로 터치해 주세요.</span>";
+        document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
+        stopBarcodeScanner(); 
+        currentPageProducts = []; 
+
+        const canvas = document.getElementById("pdfCanvas");
+        const ctx = canvas.getContext("2d"); // 에러가 났던 getContext 부분을 완벽하게 수정
+        
+        if (currentRenderTask) {
+            try { currentRenderTask.cancel(); } catch(c){}
+        }
+
+        try {
+            const page = await pdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({ scale: 1.2 });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            const renderContext = { canvasContext: ctx, viewport: viewport };
+            currentRenderTask = page.render(renderContext);
+            await currentRenderTask.promise;
+            currentRenderTask = null; 
+
+            const textContent = await page.getTextContent();
+            
+            // 공백 및 CSV 쓰레기 기호 정제 로직 개편
+            let rawTexts = [];
+            textContent.items.forEach(item => {
+                if (item.str) {
+                    let s = item.str.replace(/\\n
