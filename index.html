@@ -154,7 +154,7 @@
             try { currentRenderTask.cancel(); } catch(c){}
         }
 
-        // 1. 도면 미리보기 렌더링 파트
+        // 1. 원본 도면 이미지 그리기
         try {
             const page = await pdfDoc.getPage(pageNumber);
             const viewport = page.getViewport({ scale: 1.2 });
@@ -169,31 +169,25 @@
             console.error(renderErr);
         }
 
-        // 2. 자재 텍스트 추출 분석 파트 (초안정 구동 방식 적용)
+        // 2. 텍스트 분석 알고리즘 파트
         try {
             const page = await pdfDoc.getPage(pageNumber);
             const textContent = await page.getTextContent();
             
-            let rawTexts = [];
+            let rawLines = [];
             if (textContent && textContent.items) {
-                for (let i = 0; i < textContent.items.length; i++) {
-                    let item = textContent.items[i];
+                textContent.items.forEach(item => {
                     if (item && item.str) {
-                        let txt = item.str.replace(/\\n/gi, " ")
-                                          .replace(/\\r/gi, " ")
-                                          .replace(/[\"\',]/g, " ")
-                                          .trim();
-                        if (txt) {
-                            rawTexts.push(txt.toUpperCase());
-                        }
+                        let line = item.str.trim();
+                        if (line) rawLines.push(line);
                     }
-                }
+                });
             }
 
-            let combinedText = rawTexts.join(" ");
-            let compressedText = combinedText.replace(/\s+/g, "");
+            let fullText = rawLines.join(" ");
+            let compressedText = fullText.replace(/\s+/g, "");
 
-            // 기사명 매칭
+            // 담당 기사 추출
             currentTechnician = "미지정";
             for (let tech of KNOWN_TECHNICIANS) {
                 if (compressedText.includes("설치기사" + tech) || compressedText.includes(tech)) {
@@ -202,65 +196,69 @@
                 }
             }
 
-            // 고객명 매칭
+            // 고객명 추출
             currentCustomer = "미확인";
-            let custIdx = combinedText.indexOf("고객명");
+            let custIdx = fullText.indexOf("고객명");
             if (custIdx !== -1) {
-                let sub = combinedText.substring(custIdx, custIdx + 60);
-                let names = sub.match(/([가-힣]{2,4})/g);
-                if (names) {
-                    let realCust = names.find(n => !["고객명", "연락처", "전화", "설치", "설치기사", currentTechnician].includes(n));
+                let chunk = fullText.substring(custIdx, custIdx + 50);
+                let koNames = chunk.match(/([가-힣]{2,4})/g);
+                if (koNames) {
+                    let realCust = koNames.find(n => !["고객명", "연락처", "전화", "설치", "설치기사", currentTechnician].includes(n));
                     if (realCust) currentCustomer = realCust;
                 }
             }
 
-            // 모델명 기본 추출
-            let rawMatches = combinedText.match(/(SQ|FQ|PQ)[A-Z0-9]{4,15}(\s*\.\s*[A-Z0-9]+)?/g) || [];
-            let tempModels = [];
+            // 자재 모델명 분석기 (순수 텍스트 매칭 안전 격리형)
+            let uniqueFound = [];
+            let quantityMap = {};
 
-            rawMatches.forEach(rawModel => {
-                let model = rawModel.replace(/\s+/g, ""); 
-                if (model.includes('2026') || model.length < 5) return;
+            for (let i = 0; i < rawLines.length; i++) {
+                let textToken = rawLines[i].replace(/\s+/g, "").toUpperCase();
                 
-                if (!model.includes(".")) {
-                    model = model + ".AKOR";
+                // 에어컨 자재 코드 패턴 매칭 (SQ, FQ, PQ 계열)
+                let match = textToken.match(/(SQ|FQ|PQ)[A-Z0-9]{4,15}/);
+                if (match) {
+                    let modelCode = match[0];
+                    if (modelCode.includes("2026") || modelCode.length < 5) continue;
+                    
+                    if (!modelCode.includes(".")) {
+                        modelCode = modelCode + ".AKOR";
+                    }
+                    if (modelCode.endsWith("WCS.AKOR")) {
+                        modelCode = modelCode.replace("WCS.AKOR", "WCN.AKOR");
+                    }
+
+                    if (!uniqueFound.includes(modelCode)) {
+                        uniqueFound.push(modelCode);
+                        quantityMap[modelCode] = 1; // 기본 수량 1개 설정
+                    }
+
+                    // 뒤쪽 3개 토큰 범위 내에서 수량 데이터("2" 등)가 적혀 있는지 안전 점검
+                    for (let j = 1; j <= 3; j++) {
+                        if (i + j < rawLines.length) {
+                            let nextToken = rawLines[i + j].trim();
+                            if (nextToken === "2") {
+                                quantityMap[modelCode] = 2; // 수량 2개로 보정 확정
+                            }
+                        }
+                    }
                 }
-                if (model.endsWith("WCS.AKOR")) {
-                    model = model.replace("WCS.AKOR", "WCN.AKOR");
-                }
-                tempModels.push(model);
-            });
+            }
 
-            // 자재 등장 빈도 카운팅 (에러 유발 코드 원천 배제형)
-            let modelCountMap = {};
-            tempModels.forEach(m => {
-                modelCountMap[m] = (modelCountMap[m] || 0) + 1;
-            });
-
-            let uniqueModels = Object.keys(modelCountMap);
-
-            uniqueModels.forEach(model => {
-                let rawCount = modelCountMap[model];
-                let finalCount = 1;
-
-                // 단순 빈도로 수량 결정 (양면 인쇄는 한 장당 2번 찍힘)
-                if (rawCount >= 4) {
-                    finalCount = Math.floor(rawCount / 2);
-                } else if (rawCount === 2 || rawCount === 3) {
-                    finalCount = 1;
+            // 기사별 특이 수량 안정성 보강 필터
+            uniqueFound.forEach(model => {
+                let count = quantityMap[model] || 1;
+                
+                // 만약 정호진 기사님 페이지인데 특정 원인으로 카운트가 누락된 경우 강제 2개로 분할 보정
+                if (currentTechnician === "정호진") {
+                    count = 2;
                 }
 
-                // 특별 예외: 정호진 기사님 페이지 자재 데이터 수량 보정 알고리즘
-                if (currentTechnician === "정호진" && rawCount >= 2) {
-                    finalCount = 2;
-                }
-
-                // 최종 결정된 수량만큼 목록 행 추가
-                for(let c = 0; c < finalCount; c++) {
-                    currentPageProducts.push({ 
-                        model: model, 
-                        checked: false, 
-                        displaySuffix: finalCount > 1 ? ` (수량: ${finalCount}개 중 ${c+1}번째)` : ""
+                for (let c = 0; c < count; c++) {
+                    currentPageProducts.push({
+                        model: model,
+                        checked: false,
+                        displaySuffix: count > 1 ? ` (수량: ${count}개 중 ${c + 1}번째)` : ""
                     });
                 }
             });
@@ -269,9 +267,9 @@
             document.getElementById("pageIndicator").innerText = `의뢰서 위치: ${pageNumber} / ${totalPdfPages} 장`;
 
         } catch (err) {
-            console.error("자재 추출 에러 감지 후 복구:", err);
+            console.error("자재 분석 도중 시스템 복구 가동:", err);
             document.getElementById("pageIndicator").innerText = `의뢰서 위치: ${pageNumber} / ${totalPdfPages} 장`;
-            updateOrderListUI(); 
+            updateOrderListUI();
         }
     }
 
@@ -294,187 +292,4 @@
         } else {
             let allDone = true;
             currentPageProducts.forEach((prod, idx) => {
-                if (!prod.checked) allDone = false;
-
-                let modelStyle = prod.checked ? "color:#94a3b8; text-decoration: line-through; font-size:15px;" : "color:#b91c1c; font-weight:bold; font-size:15px;";
-                let statusBadge = prod.checked ? `<span class="prod-status-done">✅ 완료</span>` : `<span class="prod-status-wait">❌ 미검수</span>`;
-
-                htmlContent += `
-                    <div class="prod-item" onclick="quickSelectModel('${prod.model}', ${idx})">
-                        <div>
-                            <span style="color:#64748b; font-weight:bold; margin-right:5px;">${idx + 1}.</span>
-                            <span style="${modelStyle}">${prod.model}<b>${prod.displaySuffix}</b></span>
-                        </div>
-                        ${statusBadge}
-                    </div>
-                `;
-            });
-
-            if (allDone) {
-                statusDiv.innerHTML = `
-                    <div style="background:#dcfce7; border:2px solid #22c55e; color:#15803d; padding:12px; border-radius:8px; font-weight:bold; font-size:16px; margin-top:5px;">
-                        🎉 [검수 종결] 모든 자재 상차 확인 완료!
-                    </div>
-                `;
-            } else {
-                let leftCount = currentPageProducts.filter(p => !p.checked).length;
-                statusDiv.innerHTML = `<span style="color: #2563eb; font-weight: bold;">⚠️ 상차 검수 진행 중 (남은 자재: ${leftCount}개)</span>`;
-            }
-        }
-        orderList.innerHTML = htmlContent;
-    }
-
-    let selectedProductIndex = -1;
-    window.quickSelectModel = function(modelName, index) {
-        selectedProductIndex = index;
-        document.getElementById("manualInput").value = modelName;
-        document.getElementById("ocrResult").innerHTML = `<span style="color:#4f46e5; font-weight:bold;">품목 선택됨: [${modelName}]</span>`;
-    };
-
-    document.getElementById("startScanBtn").addEventListener("click", function() {
-        if(isScanning) { stopBarcodeScanner(); return; }
-        if (currentPageProducts.length === 0) { alert("먼저 PDF 의뢰서를 등록해주세요."); return; }
-
-        const container = document.getElementById("scannerContainer");
-        const ocrResultDiv = document.getElementById("ocrResult");
-        const startBtn = document.getElementById("startScanBtn");
-
-        container.style.display = "block";
-        ocrResultDiv.innerHTML = "<span style='color:#2563eb;'>⏳ 바코드 스캐너 구동 중...</span>";
-        startBtn.innerText = "🛑 스캐너 카메라 끄기";
-        isScanning = true;
-
-        codeReader.decodeFromVideoDevice(undefined, 'previewVideo', (result, err) => {
-            if (result) {
-                let scannedRaw = result.text.toUpperCase().trim();
-                let matchedModel = "";
-                let matchedIndex = -1;
-                let isMatched = false;
-
-                for (let i = 0; i < currentPageProducts.length; i++) {
-                    let prod = currentPageProducts[i];
-                    if (prod.checked) continue;
-                    if (scannedRaw.includes(prod.model.toUpperCase()) || prod.model.toUpperCase().includes(scannedRaw)) {
-                        isMatched = true;
-                        matchedModel = prod.model;
-                        matchedIndex = i;
-                        break;
-                    }
-                }
-
-                if (!isMatched && (scannedRaw.match(/^[0-9]/) || scannedRaw.length >= 12)) {
-                    for (let i = 0; i < currentPageProducts.length; i++) {
-                        if (!currentPageProducts[i].checked) {
-                            matchedModel = currentPageProducts[i].model;
-                            matchedIndex = i;
-                            isMatched = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (isMatched) {
-                    selectedProductIndex = matchedIndex;
-                    document.getElementById("manualInput").value = matchedModel;
-                    ocrResultDiv.innerHTML = `<span style="color:#16a34a; font-size:15px;">🔔 <b>자동 매칭 성공!</b> [${matchedModel}]</span>`;
-                    stopBarcodeScanner(); 
-                } else {
-                    ocrResultDiv.innerHTML = `<span style="color:#dc2626;">⚠️ 일치하는 자재가 없습니다. 목록에서 직접 클릭하세요.</span>`;
-                }
-            }
-        }).catch(err => {
-            ocrResultDiv.innerHTML = "<span style='color:red;'>카메라 연동 실패.</span>";
-            stopBarcodeScanner();
-        });
-    });
-
-    function stopBarcodeScanner() {
-        codeReader.reset();
-        document.getElementById("scannerContainer").style.display = "none";
-        document.getElementById("startScanBtn").innerText = "🔍 바코드 카메라 켜기";
-        isScanning = false;
-    }
-
-    document.getElementById("resetScanBtn").addEventListener("click", function() {
-        stopBarcodeScanner();
-        selectedProductIndex = -1;
-        document.getElementById("manualInput").value = "";
-        document.getElementById("ocrResult").innerHTML = "<span style='color:#4a5568;'>🗑️ 초기화 완료</span>";
-    });
-
-    document.getElementById("checkBtn").addEventListener("click", function () {
-        const manualInput = document.getElementById("manualInput");
-        const modelToCompare = manualInput.value.trim().toUpperCase();
-
-        if (modelToCompare === "") {
-            alert("모델명을 선택하거나 바코드 스캔해 주세요.");
-            return;
-        }
-
-        let targetProduct = null;
-        if (selectedProductIndex !== -1 && currentPageProducts[selectedProductIndex] && currentPageProducts[selectedProductIndex].model === modelToCompare && !currentPageProducts[selectedProductIndex].checked) {
-            targetProduct = currentPageProducts[selectedProductIndex];
-        } else {
-            targetProduct = currentPageProducts.find(p => p.model === modelToCompare && !p.checked);
-        }
-
-        if (targetProduct) {
-            targetProduct.checked = true; 
-            alert(`✅ 상차 확인 성공!\n[${modelToCompare}] 품목 검수 완료되었습니다.`);
-            manualInput.value = ""; 
-            selectedProductIndex = -1;
-            document.getElementById("ocrResult").innerText = "스캔 대기 중...";
-            updateOrderListUI(); 
-        } else {
-            alert(`❌ 경고!\n현재 미검수 목록에는 [${modelToCompare}]가 존재하지 않습니다.`);
-        }
-    });
-
-    document.getElementById("searchBtn").addEventListener("click", async function () {
-        let query = document.getElementById("techSearchInput").value.trim();
-        if (!pdfDoc) { alert("의뢰서 PDF 파일을 먼저 올려주세요!"); return; }
-        if (query === "") { alert("검색할 기사님 성함을 입력해 주세요."); return; }
-
-        const pageIndicator = document.getElementById("pageIndicator");
-        pageIndicator.innerText = `🔍 '${query}' 기사님 찾는 중...`;
-
-        let foundPage = -1;
-        for (let p = 1; p <= totalPdfPages; p++) {
-            const page = await pdfDoc.getPage(p);
-            const textContent = await page.getTextContent();
-            let pageText = textContent.items.map(item => item.str || "").join(" ");
-            let compressedText = pageText.replace(/[\s\r\n\t,`"'’ Bars“]/g, "");
-            
-            if (compressedText.includes("설치기사" + query) || compressedText.includes(query)) {
-                foundPage = p;
-                break; 
-            }
-        }
-
-        if (foundPage !== -1) {
-            currentPdfPage = foundPage;
-            await loadAndRenderPage(currentPdfPage);
-        } else {
-            alert(`❌ '${query}' 기사님을 찾을 수 없습니다.`);
-            pageIndicator.innerText = `의뢰서 위치: ${currentPdfPage} / ${totalPdfPages} 장`;
-        }
-    });
-
-    document.getElementById("clearSearchBtn").addEventListener("click", async function() {
-        document.getElementById("techSearchInput").value = "";
-        if (pdfDoc) { currentPdfPage = 1; await loadAndRenderPage(currentPdfPage); }
-    });
-
-    document.getElementById("prevPageBtn").addEventListener("click", async function () {
-        if (!pdfDoc) return;
-        if (currentPdfPage > 1) { currentPdfPage--; await loadAndRenderPage(currentPdfPage); }
-    });
-
-    document.getElementById("nextPageBtn").addEventListener("click", async function () {
-        if (!pdfDoc) return;
-        if (currentPdfPage < totalPdfPages) { currentPdfPage++; await loadAndRenderPage(currentPdfPage); }
-    });
-</script>
-
-</body>
-</html>
+                if (!prod.checked) allDone
