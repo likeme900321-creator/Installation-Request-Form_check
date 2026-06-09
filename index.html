@@ -6,15 +6,15 @@
     <title>Daon E.N.G 통합 자재 검수 시스템</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
-    
     <style>
         body { font-family: 'Arial', sans-serif; background-color: #f1f5f9; padding: 15px; color: #1e293b; }
         .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
         .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
         .btn { width: 100%; padding: 12px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; margin-top: 5px; }
         .btn-success { background: #16a34a; color: white; }
-        #scanner-container { width: 100%; height: 250px; background: #000; display: none; overflow: hidden; margin-top: 10px; }
+        #scanner-container { width: 100%; height: 250px; background: #000; display: none; margin-top: 10px; }
         #scanner-container video { width: 100%; height: 100%; object-fit: cover; }
+        .model-item { padding: 8px; border-bottom: 1px solid #e2e8f0; transition: all 0.3s; }
         #pdfCanvas { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 10px; }
     </style>
 </head>
@@ -22,7 +22,6 @@
 
 <div class="container">
     <h2>Daon E.N.G 검수 시스템</h2>
-    
     <div class="card">
         <label>📄 설치의뢰서 PDF 등록</label>
         <input type="file" id="pdfFile" accept="application/pdf" style="width: 100%;">
@@ -34,7 +33,6 @@
     </div>
 
     <div id="pageIndicator" style="text-align: center; font-weight: bold; margin-bottom: 10px;">파일을 선택해주세요.</div>
-
     <div id="orderList" class="card">진짜 자재 목록이 출력됩니다.</div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
@@ -50,32 +48,29 @@
         <button id="checkBtn" class="btn btn-success">✅ 상차 자재 검수 확정</button>
         <div id="status" style="margin-top: 10px; text-align: center;"></div>
     </div>
-
     <canvas id="pdfCanvas"></canvas>
 </div>
 
 <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
-    let pdfDoc = null, currentPdfPage = 1, currentPageTargetModels = [];
+    let pdfDoc = null, currentPageTargetModels = [];
 
-    // [PDF 로드]
     document.getElementById("pdfFile").addEventListener("change", async (e) => {
         const file = e.target.files[0];
         const reader = new FileReader();
         reader.onload = async () => {
-            pdfDoc = await pdfjsLib.getDocument({data: new Uint8Array(reader.result)}).promise;
+            const typedarray = new Uint8Array(reader.result);
+            pdfDoc = await pdfjsLib.getDocument({data: typedarray}).promise;
             await loadAndRenderPage(1);
         };
         reader.readAsArrayBuffer(file);
     });
 
-    // [페이지 렌더링 및 모델 추출]
     async function loadAndRenderPage(pageNumber) {
         const page = await pdfDoc.getPage(pageNumber);
         const textContent = await page.getTextContent();
         const pageText = textContent.items.map(i => i.str).join(" ").toUpperCase();
         
-        // [세트 모델명 필터링 로직]
         const matches = pageText.match(/(SQ|FQ)[A-Z0-9]{4,10}/g) || [];
         currentPageTargetModels = [];
         let seen = new Set();
@@ -88,45 +83,55 @@
             if (!seen.has(final)) { seen.add(final); currentPageTargetModels.push(final); }
         });
 
-        document.getElementById("orderList").innerHTML = currentPageTargetModels.map(m => `<div>• ${m}</div>`).join("");
+        document.getElementById("orderList").innerHTML = currentPageTargetModels.map(m => `
+            <div id="model-${m.replace(/[^a-zA-Z0-9]/g, '')}" class="model-item">• ${m}</div>
+        `).join("");
         document.getElementById("pageIndicator").innerText = `현재 페이지: ${pageNumber}`;
+
+        const canvas = document.getElementById("pdfCanvas");
+        const viewport = page.getViewport({ scale: 1.0 });
+        canvas.height = viewport.height; canvas.width = viewport.width;
+        page.render({ canvasContext: canvas.getContext("2d"), viewport: viewport });
     }
 
-    // [실시간 바코드 스캔]
     document.getElementById("startScanBtn").addEventListener("click", () => {
         document.getElementById("scanner-container").style.display = "block";
         Quagga.init({
             inputStream: { type: "LiveStream", target: document.querySelector('#scanner-container'), constraints: { facingMode: "environment" } },
             decoder: { readers: ["code_128_reader"] }
         }, () => Quagga.start());
-
         Quagga.onDetected((result) => {
             if (currentPageTargetModels.includes(result.codeResult.code)) {
                 document.getElementById("manualInput").value = result.codeResult.code;
                 document.getElementById("ocrResult").innerHTML = "✅ 인식 성공: " + result.codeResult.code;
-                Quagga.stop();
-                document.getElementById("scanner-container").style.display = "none";
+                Quagga.stop(); document.getElementById("scanner-container").style.display = "none";
             }
         });
     });
 
-    // [기사 검색]
+    document.getElementById("checkBtn").addEventListener("click", () => {
+        const val = document.getElementById("manualInput").value.trim().toUpperCase();
+        const targetDiv = document.getElementById(`model-${val.replace(/[^a-zA-Z0-9]/g, '')}`);
+        if (currentPageTargetModels.includes(val)) {
+            if (targetDiv) {
+                targetDiv.style.textDecoration = "line-through";
+                targetDiv.style.color = "#94a3b8";
+                if (!targetDiv.innerHTML.includes("✅")) targetDiv.innerHTML += " ✅";
+            }
+            document.getElementById("status").innerHTML = `<span style="color:green;">✅ 검수 완료</span>`;
+        } else {
+            document.getElementById("status").innerHTML = `<span style="color:red;">❌ 목록에 없음</span>`;
+        }
+    });
+
     document.getElementById("searchBtn").addEventListener("click", async () => {
         const query = document.getElementById("techSearchInput").value;
         for (let i = 1; i <= pdfDoc.numPages; i++) {
             const page = await pdfDoc.getPage(i);
             const text = (await page.getTextContent()).items.map(it => it.str).join(" ");
-            if (text.includes(query)) {
-                await loadAndRenderPage(i);
-                return;
-            }
+            if (text.includes(query)) { await loadAndRenderPage(i); return; }
         }
         alert("기사님을 찾을 수 없습니다.");
-    });
-
-    document.getElementById("checkBtn").addEventListener("click", () => {
-        const val = document.getElementById("manualInput").value;
-        document.getElementById("status").innerHTML = currentPageTargetModels.includes(val) ? "✅ 검수 완료" : "❌ 오류";
     });
 </script>
 </body>
