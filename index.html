@@ -2,70 +2,73 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Daon E.N.G 자재 정밀 검수</title>
+    <title>Daon E.N.G 통합 검수 시스템</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
-        .item { background: white; padding: 12px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .item { padding: 10px; margin-bottom: 5px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
         .checked { background: #d1fae5; text-decoration: line-through; color: #065f46; }
-        button { padding: 6px 12px; cursor: pointer; background: #2563eb; color: white; border: none; border-radius: 4px; }
+        input, select { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 10px 20px; cursor: pointer; background: #2563eb; color: white; border: none; border-radius: 4px; width: 100%; }
     </style>
 </head>
 <body>
-    <h2>자재 상차 검수 리스트</h2>
+<div class="container">
+    <h2>통합 자재 검수 시스템</h2>
     <input type="file" id="pdfFile" accept="application/pdf">
-    <div id="orderList" style="margin-top:20px;"></div>
+    <input type="text" id="driverSearch" placeholder="기사님 성함을 검색하세요...">
+    <div id="orderList"></div>
+</div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
-        
-        document.getElementById("pdfFile").addEventListener("change", async (e) => {
-            const file = e.target.files[0];
-            const reader = new FileReader();
-            reader.onload = async () => {
-                const pdf = await pdfjsLib.getDocument({data: new Uint8Array(reader.result)}).promise;
-                const orderList = document.getElementById("orderList");
-                orderList.innerHTML = "";
-                let foundModels = new Set();
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
-                    const allText = textContent.items.map(it => it.str).join(" ");
-                    
-                    // 정규식: SQ/FQ 뒤에 4~10자리 문자가 오는 모든 패턴 추출
-                    const potentialModels = allText.match(/(SQ|FQ)[A-Z0-9]{4,10}/g);
-                    
-                    if (potentialModels) {
-                        potentialModels.forEach(m => {
-                            if (m.startsWith("PQ")) return;
+    let allExtractedData = [];
 
-                            // 1. 끝자리가 S이면 제외
-                            if (m.endsWith("S")) return;
-
-                            // 2. 끝에서 3자리(slice(-3)) 중에 숫자가 포함되어 있으면 제외
-                            const lastThree = m.slice(-3);
-                            if (/\d/.test(lastThree)) return;
-
-                            // 통과된 것만 확장자 확인 후 저장
-                            let finalModel = m;
-                            if (allText.includes(m + ".BKOR")) finalModel = m + ".BKOR";
-                            else if (allText.includes(m + ".EKOR")) finalModel = m + ".EKOR";
-
-                            foundModels.add(finalModel);
-                        });
-                    }
+    document.getElementById("pdfFile").addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const pdf = await pdfjsLib.getDocument({data: new Uint8Array(reader.result)}).promise;
+            allExtractedData = [];
+            
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const allText = (await page.getTextContent()).items.map(it => it.str).join(" ");
+                const matches = allText.match(/(SQ|FQ)[A-Z0-9]{4,10}/g);
+                
+                if (matches) {
+                    matches.forEach(m => {
+                        if (m.startsWith("PQ") || m.endsWith("S") || /\d/.test(m.slice(-3))) return;
+                        
+                        let final = m;
+                        if (allText.includes(m + ".BKOR")) final = m + ".BKOR";
+                        else if (allText.includes(m + ".EKOR")) final = m + ".EKOR";
+                        
+                        if (!allExtractedData.includes(final)) allExtractedData.push(final);
+                    });
                 }
+            }
+            renderList(allExtractedData);
+        };
+        reader.readAsArrayBuffer(file);
+    });
 
-                [...foundModels].sort().forEach(model => {
-                    const div = document.createElement("div");
-                    div.className = "item";
-                    div.innerHTML = `<span>${model}</span> <button onclick="this.parentElement.classList.add('checked')">확인</button>`;
-                    orderList.appendChild(div);
-                });
-            };
-            reader.readAsArrayBuffer(file);
+    function renderList(data) {
+        const listDiv = document.getElementById("orderList");
+        const query = document.getElementById("driverSearch").value;
+        listDiv.innerHTML = "";
+        
+        data.filter(item => item.includes(query)).sort().forEach(model => {
+            const div = document.createElement("div");
+            div.className = "item";
+            div.innerHTML = `<span>${model}</span> <button onclick="this.classList.add('checked')">확인</button>`;
+            listDiv.appendChild(div);
         });
-    </script>
+    }
+
+    document.getElementById("driverSearch").addEventListener("input", () => renderList(allExtractedData));
+</script>
 </body>
 </html>
