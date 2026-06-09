@@ -17,6 +17,9 @@
         .btn-primary { background: #2563eb; color: white; }
         .btn-secondary { background: #64748b; color: white; }
         .btn-success { background: #16a34a; color: white; }
+        /* 검수 완료된 항목 스타일 */
+        .model-item { padding: 8px; border-bottom: 1px solid #e2e8f0; transition: all 0.3s; }
+        .checked { text-decoration: line-through; color: #94a3b8; font-weight: normal !important; }
         .page-ctrl { display: flex; justify-content: space-between; gap: 10px; margin: 10px 0; }
         .page-ctrl button { flex: 1; padding: 10px; font-weight: bold; background: #e2e8f0; border: none; border-radius: 6px; cursor: pointer; }
         #pdfCanvas { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 10px; background: #e2e8f0; }
@@ -243,10 +246,27 @@ currentPageTargetModels = uniqueProducts.map(p => p.model);
                 });
             }
             
-            orderList.innerHTML = htmlContent;
+        // [교체할 부분 시작]
+            orderList.innerHTML = `<div style="font-weight:bold; margin-top:15px; margin-bottom:5px; font-size:13px; color:#4f46e5;">[배정 자재 목록]</div>`;
+
+            if (uniqueProducts.length === 0) {
+                orderList.innerHTML += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정 자재가 없습니다.</div>`;
+            } else {
+                uniqueProducts.forEach((prod, idx) => {
+                    const modelId = prod.model.replace(/[^a-zA-Z0-9]/g, '');
+                    orderList.innerHTML += `
+                        <div id="model-${modelId}" class="model-item">
+                            • <b>자재 ${idx + 1}:</b> <span class="model-text" style="color:#b91c1c; font-weight:bold; font-size:15px;">${prod.model}</span> 
+                            <span style="float:right; font-weight:bold;">1 개</span>
+                        </div>
+                    `;
+                });
+            }
+
             pageIndicator.innerText = `의뢰서 위치: ${pageNumber} / ${totalPdfPages} 장`;
             document.getElementById("status").innerHTML = `<span style="color: #2563eb; font-weight: bold;">현재 페이지 검수 대기 (자재: ${currentPageTargetModels.length}개)</span>`;
-
+            // [교체할 부분 끝]
+            
         } catch (err) {
             console.error(err);
             pageIndicator.innerText = `⚠️ ${pageNumber}페이지 이동 실패`;
@@ -341,27 +361,34 @@ currentPageTargetModels = uniqueProducts.map(p => p.model);
         });
     });
 
-    // [6] 최종 검수 확정 도장
-    document.getElementById("checkBtn").addEventListener("click", function () {
-        const manualInput = document.getElementById("manualInput");
-        const statusDiv = document.getElementById("status");
-        const modelToCompare = manualInput.value.trim().toUpperCase();
+    // [6] 최종 검수 확정 도장 로직 내부 수정
+document.getElementById("checkBtn").addEventListener("click", function () {
+    const manualInput = document.getElementById("manualInput");
+    const statusDiv = document.getElementById("status");
+    const modelToCompare = manualInput.value.trim().toUpperCase();
 
-        if (modelToCompare === "") {
-            alert("모델명을 직접 입력하거나 사진 스캔을 먼저 해주세요.");
-            return;
+    if (modelToCompare === "") {
+        alert("모델명을 직접 입력하거나 사진 스캔을 먼저 해주세요.");
+        return;
+    }
+
+    const isFinalCheckPassed = currentPageTargetModels.includes(modelToCompare);
+
+    if (isFinalCheckPassed) {
+        // ✅ 성공 시: 리스트에서 해당 요소 찾아 스타일 적용
+        const modelId = modelToCompare.replace(/[^a-zA-Z0-9]/g, '');
+        const targetDiv = document.getElementById(`model-${modelId}`);
+        if (targetDiv) {
+            targetDiv.classList.add("checked"); // 취소선 및 색상 변경
+            if (!targetDiv.innerHTML.includes("✅")) targetDiv.innerHTML += " ✅";
         }
-
-        const isFinalCheckPassed = currentPageTargetModels.includes(modelToCompare);
-
-        if (isFinalCheckPassed) {
-            alert(`✅ 검수 성공!\n현재 기사님의 정상 상차 자재입니다: ${modelToCompare}`);
-            statusDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">상차 완료 승인 (${modelToCompare})</span>`;
-        } else {
-            alert(`❌ 경고! 오상차 위험!\n현재 활성화된 기사님 품목 리스트에는 [${modelToCompare}]가 없습니다.`);
-            statusDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">⚠️ 오상차 위험 품목 감지</span>`;
-        }
-    });
+        
+        statusDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">상차 완료 승인 (${modelToCompare})</span>`;
+    } else {
+        statusDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">⚠️ 목록에 없는 품목입니다.</span>`;
+    }
+});
+    
 </script>
 
 </body>
