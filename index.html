@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Daon E.N.G 에어컨 자재 검수 시스템</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.0/dist/tesseract.min.js"></script>
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
     
     <style>
         body { font-family: 'Arial', sans-serif; background-color: #f1f5f9; padding: 15px; margin: 0; color: #1e293b; }
@@ -16,19 +16,20 @@
         .btn-primary { background: #2563eb; color: white; }
         .btn-secondary { background: #64748b; color: white; }
         .btn-success { background: #16a34a; color: white; }
-        .btn-danger { background: #dc2626; color: white; }
+        
         .page-ctrl { display: flex; justify-content: space-between; gap: 10px; margin: 10px 0; }
         .page-ctrl button { flex: 1; padding: 10px; font-weight: bold; background: #e2e8f0; border: none; border-radius: 6px; cursor: pointer; }
         #pdfCanvas { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 10px; background: #e2e8f0; }
         
-        .prod-item { margin-bottom: 8px; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; background: white; display: flex; justify-content: space-between; align-items: center; transition: all 0.3s; }
+        .prod-item { margin-bottom: 8px; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; background: white; display: flex; justify-content: space-between; align-items: center; }
         .prod-status-wait { background: #fff7ed; border-color: #ffedd5; color: #c2410c; font-size: 12px; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
         .prod-status-done { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; font-size: 12px; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
         
-        /* 사진 입력 및 지우기 레이아웃 정의 */
-        .camera-row { display: flex; gap: 8px; align-items: center; margin-top: 5px; }
-        .camera-row input[type="file"] { flex: 1; }
-        .btn-reset { width: auto; padding: 12px 16px; font-size: 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; white-space: nowrap; }
+        /* 🎥 실시간 비디오 바코드 스캐너 스크린 레이아웃 */
+        #scannerContainer { display: none; width: 100%; max-width: 400px; margin: 10px auto; position: relative; border-radius: 8px; overflow: hidden; border: 2px solid #2563eb; }
+        #previewVideo { width: 100%; height: auto; display: block; background: #000; }
+        .scan-guide-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 2px; background: red; box-shadow: 0 0 8px red; transform: translateY(-50%); animation: laser 1.5s infinite; }
+        @keyframes laser { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
     </style>
 </head>
 <body>
@@ -61,10 +62,15 @@
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
-        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 사진 매칭</label>
-        <div class="camera-row">
-            <input type="file" id="cameraInput" accept="image/*" capture="environment" class="btn btn-secondary" style="padding: 8px; margin: 0;">
-            <button id="resetImageBtn" class="btn-reset" type="button">❌ 사진 초기화</button>
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 스캔 매칭</label>
+        <div style="display:flex; gap:8px;">
+            <button id="startScanBtn" class="btn btn-primary" style="margin:0; flex:2;">🔍 바코드 카메라 켜기</button>
+            <button id="resetScanBtn" class="btn btn-secondary" style="margin:0; flex:1; background:#4a5568;">❌ 스캔 초기화</button>
+        </div>
+        
+        <div id="scannerContainer">
+            <video id="previewVideo"></video>
+            <div class="scan-guide-line"></div>
         </div>
         <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">스캔 대기 중...</div>
     </div>
@@ -94,7 +100,10 @@
     let currentCustomer = "미확인";
     let currentPageProducts = []; 
 
-    // 다온 ENG 기사님 43명 마스터 데이터베이스
+    // 초고속 멀티 바코드 리더 엔진 초기화
+    const codeReader = new ZXing.BrowserMultiFormatReader();
+    let isScanning = false;
+
     const KNOWN_TECHNICIANS = [
         "강정환", "강진수", "공병철", "국승욱", "김영금", "김응돌", "김지흥", "김태근", 
         "김남률", "민지운", "박건우", "박은철", "박종덕", "박종선", "배철옥", "백인수", 
@@ -109,8 +118,7 @@
         const file = e.target.files[0];
         if (!file) return;
 
-        const pageIndicator = document.getElementById("pageIndicator");
-        pageIndicator.innerText = "📄 의뢰서 문서를 불러오는 중...";
+        document.getElementById("pageIndicator").innerText = "📄 의뢰서 문서를 불러오는 중...";
 
         const fileReader = new FileReader();
         fileReader.onload = async function () {
@@ -141,9 +149,9 @@
         if (!pdfDoc) return;
 
         document.getElementById("manualInput").value = "";
-        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 스티커 바코드 사진을 촬영해 주세요.</span>";
+        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 [바코드 카메라 켜기]를 누르고 바코드를 조준하세요.</span>";
         document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
-        document.getElementById("cameraInput").value = ""; // 카메라 인풋 초기화
+        stopBarcodeScanner(); // 페이지 이동 시 카메라 안전하게 끄기
         currentPageProducts = []; 
 
         const canvas = document.getElementById("pdfCanvas");
@@ -170,7 +178,7 @@
 
             const textContent = await page.getTextContent();
             let pageText = textContent.items.map(item => item.str || "").join(" ");
-            pageText = pageText.replace(/[\r\n\t,`"'’“]|\s+/g, " ").trim();
+            pageText = pageText.replace(/[\r\n\t,`"'’ Bars“]|\s+/g, " ").trim();
 
             // 기사명 매칭
             currentTechnician = "미지정";
@@ -201,7 +209,7 @@
                 }
             }
 
-            // 자재 모델명 수집
+            // 자재 모델명 수집 기본 필터 레이어
             let seenModels = new Set();
             const upperRawText = pageText.toUpperCase();
             const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
@@ -231,4 +239,206 @@
         }
     }
 
-    //
+    // 현황판 UI 변동 갱신 함수
+    function updateOrderListUI() {
+        const orderList = document.getElementById("orderList");
+        const statusDiv = document.getElementById("status");
+
+        let htmlContent = `
+            <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
+                👷 담당기사: <span style="font-size:16px; color:#0284c7;">${currentTechnician}</span> 기사님
+            </div>
+            <div style="margin-bottom: 12px; font-size:14px; color:#334155;">
+                👤 <b>고객명:</b> ${currentCustomer} 고객님
+            </div>
+            <div style="font-weight:bold; margin-top:15px; margin-bottom:8px; font-size:13px; color:#4f46e5;">[현장 상차 자재 검수 현황]</div>
+        `;
+
+        if (currentPageProducts.length === 0) {
+            htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정 자재 데이터가 없습니다.</div>`;
+            statusDiv.innerHTML = `<span style="color: #64748b; font-weight: bold;">확인할 자재 없음</span>`;
+        } else {
+            let allDone = true;
+            currentPageProducts.forEach((prod, idx) => {
+                if (!prod.checked) allDone = false;
+
+                let modelStyle = prod.checked ? "color:#94a3b8; text-decoration: line-through; font-size:15px;" : "color:#b91c1c; font-weight:bold; font-size:15px;";
+                let statusBadge = prod.checked ? `<span class="prod-status-done">✅ 완료</span>` : `<span class="prod-status-wait">❌ 미검수</span>`;
+
+                htmlContent += `
+                    <div class="prod-item">
+                        <div>
+                            <span style="color:#64748b; font-weight:bold; margin-right:5px;">${idx + 1}.</span>
+                            <span style="${modelStyle}">${prod.model}</span>
+                        </div>
+                        ${statusBadge}
+                    </div>
+                `;
+            });
+
+            if (allDone) {
+                statusDiv.innerHTML = `
+                    <div style="background:#dcfce7; border:2px solid #22c55e; color:#15803d; padding:12px; border-radius:8px; font-weight:bold; font-size:16px; margin-top:5px;">
+                        🎉 [검수 종결] 현재 기사님 모든 자재 상차 확인 완료!
+                    </div>
+                `;
+            } else {
+                let leftCount = currentPageProducts.filter(p => !p.checked).length;
+                statusDiv.innerHTML = `<span style="color: #2563eb; font-weight: bold;">⚠️ 상차 검수 진행 중 (남은 자재: ${leftCount}개)</span>`;
+            }
+        }
+
+        orderList.innerHTML = htmlContent;
+    }
+
+    // 🚀 [초고속 실시간 레이저 방식] 바코드 스캐너 구동 함수
+    document.getElementById("startScanBtn").addEventListener("click", function() {
+        if(isScanning) {
+            stopBarcodeScanner();
+            return;
+        }
+        
+        if (currentPageProducts.length === 0) {
+            alert("먼저 PDF 의뢰서를 등록하여 자재 목록을 활성화해주세요.");
+            return;
+        }
+
+        const container = document.getElementById("scannerContainer");
+        const ocrResultDiv = document.getElementById("ocrResult");
+        const startBtn = document.getElementById("startScanBtn");
+
+        container.style.display = "block";
+        ocrResultDiv.innerHTML = "<span style='color:#2563eb;'>⏳ 실시간 바코드 스캐너 시동 중...</span>";
+        startBtn.innerText = "🛑 스캐너 카메라 끄기";
+        isScanning = true;
+
+        // 스마트폰 후면 카메라 강제 타겟팅 진입 및 실시간 디코딩 스트리밍 시작
+        codeReader.decodeFromVideoDevice(undefined, 'previewVideo', (result, err) => {
+            if (result) {
+                let scannedBarcode = result.text.toUpperCase().trim();
+                console.log("바코드 스캔 원본 값 추출 성공:", scannedBarcode);
+
+                let matchedModel = "";
+                let isMatched = false;
+
+                // 🎯 바코드 데이터 내부에 자재 모델명이 박혀있는지 상호 매칭 추적
+                for (let prod of currentPageProducts) {
+                    let cleanTarget = prod.model.replace(/[-.]/g, '');
+                    if (scannedBarcode.includes(prod.model) || scannedBarcode.includes(cleanTarget) || prod.model.includes(scannedBarcode)) {
+                        isMatched = true;
+                        matchedModel = prod.model;
+                        break;
+                    }
+                }
+
+                if (isMatched) {
+                    document.getElementById("manualInput").value = matchedModel;
+                    ocrResultDiv.innerHTML = `<span style="color:#16a34a; font-size:15px;">🔔 <b>바코드 일치 성공!</b> [${matchedModel}] 자동 입력됨.</span>`;
+                    stopBarcodeScanner(); // 성공 시 카메라 자동 종료 후 자원 회수
+                } else {
+                    ocrResultDiv.innerHTML = `<span style="color:#dc2626;">⚠️ 인식된 값: ${scannedBarcode}<br>이 차량에 배정된 자재 바코드가 아닙니다!</span>`;
+                }
+            }
+            if (err && !(err instanceof ZXing.NotFoundException)) {
+                console.error(err);
+            }
+        }).catch(err => {
+            console.error(err);
+            ocrResultDiv.innerHTML = "<span style='color:red;'>카메라 연동 실패. 권한 승인이 필요합니다.</span>";
+            stopBarcodeScanner();
+        });
+    });
+
+    // 🛑 스캐너 안전 종료 내부 조치 보강 함수
+    function stopBarcodeScanner() {
+        codeReader.reset();
+        document.getElementById("scannerContainer").style.display = "none";
+        document.getElementById("startScanBtn").innerText = "🔍 바코드 카메라 켜기";
+        isScanning = false;
+    }
+
+    // ❌ [요청 사항 반영] 사진 및 스캔 데이터 전면 초기화
+    document.getElementById("resetScanBtn").addEventListener("click", function() {
+        stopBarcodeScanner();
+        document.getElementById("manualInput").value = "";
+        document.getElementById("ocrResult").innerHTML = "<span style='color:#4a5568;'>🗑️ 스캔 기록이 완전히 삭제되었습니다.</span>";
+    });
+
+    // 상차 자재 최종 검수 스탬프 도장
+    document.getElementById("checkBtn").addEventListener("click", function () {
+        const manualInput = document.getElementById("manualInput");
+        const modelToCompare = manualInput.value.trim().toUpperCase();
+
+        if (modelToCompare === "") {
+            alert("모델명을 직접 입력하거나 바코드 스캔을 완료한 뒤 확정 버튼을 눌러주세요.");
+            return;
+        }
+
+        let targetProduct = currentPageProducts.find(p => p.model === modelToCompare);
+
+        if (targetProduct) {
+            if (targetProduct.checked) {
+                alert(`알림: [${modelToCompare}]는 이미 검수가 완료된 품목입니다.`);
+            } else {
+                targetProduct.checked = true; 
+                alert(`✅ 상차 확인 성공!\n[${modelToCompare}] 품목 검수 완료 처리되었습니다.`);
+                manualInput.value = ""; 
+                document.getElementById("ocrResult").innerText = "스캔 대기 중...";
+                updateOrderListUI(); 
+            }
+        } else {
+            alert(`❌ 경고! 오상차 위험!\n현재 기사님 배정 품목 리스트에는 [${modelToCompare}]가 존재하지 않습니다.`);
+        }
+    });
+
+    // 기사명 검색 구역
+    document.getElementById("searchBtn").addEventListener("click", async function () {
+        let query = document.getElementById("techSearchInput").value.trim();
+        if (!pdfDoc) { alert("의뢰서 PDF 파일을 먼저 올려주세요!"); return; }
+        if (query === "") { alert("검색할 기사님 성함을 입력해 주세요."); return; }
+
+        const pageIndicator = document.getElementById("pageIndicator");
+        pageIndicator.innerText = `🔍 문서 내에서 '${query}' 기사님 찾는 중...`;
+
+        let foundPage = -1;
+        for (let p = 1; p <= totalPdfPages; p++) {
+            const page = await pdfDoc.getPage(p);
+            const textContent = await page.getTextContent();
+            let pageText = textContent.items.map(item => item.str || "").join(" ");
+            let compressedText = pageText.replace(/[\s\r\n\t,`"'’“]/g, "");
+            
+            if (compressedText.includes("설치기사" + query) || compressedText.includes(query)) {
+                foundPage = p;
+                break; 
+            }
+        }
+
+        if (foundPage !== -1) {
+            currentPdfPage = foundPage;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert(`❌ '${query}' 기사님은 이 의뢰서 문서에 등록되어 있지 않습니다.`);
+            pageIndicator.innerText = `의뢰서 위치: ${currentPdfPage} / ${totalPdfPages} 장`;
+        }
+    });
+
+    document.getElementById("clearSearchBtn").addEventListener("click", async function() {
+        document.getElementById("techSearchInput").value = "";
+        if (pdfDoc) { currentPdfPage = 1; await loadAndRenderPage(currentPdfPage); }
+    });
+
+    document.getElementById("prevPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage > 1) { currentPdfPage--; await loadAndRenderPage(currentPdfPage); }
+        else { alert("첫 번째 의뢰서 페이지입니다."); }
+    });
+
+    document.getElementById("nextPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage < totalPdfPages) { currentPdfPage++; await loadAndRenderPage(currentPdfPage); }
+        else { alert("마지막 의뢰서 페이지입니다."); }
+    });
+</script>
+
+</body>
+</html>
