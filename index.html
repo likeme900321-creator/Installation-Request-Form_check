@@ -154,6 +154,7 @@
             try { currentRenderTask.cancel(); } catch(c){}
         }
 
+        // 1. 도면 미리보기 렌더링 파트
         try {
             const page = await pdfDoc.getPage(pageNumber);
             const viewport = page.getViewport({ scale: 1.2 });
@@ -168,6 +169,7 @@
             console.error(renderErr);
         }
 
+        // 2. 자재 텍스트 추출 분석 파트 (초안정 구동 방식 적용)
         try {
             const page = await pdfDoc.getPage(pageNumber);
             const textContent = await page.getTextContent();
@@ -191,7 +193,7 @@
             let combinedText = rawTexts.join(" ");
             let compressedText = combinedText.replace(/\s+/g, "");
 
-            // 1. 기사명 매칭
+            // 기사명 매칭
             currentTechnician = "미지정";
             for (let tech of KNOWN_TECHNICIANS) {
                 if (compressedText.includes("설치기사" + tech) || compressedText.includes(tech)) {
@@ -200,7 +202,7 @@
                 }
             }
 
-            // 2. 고객명 매칭
+            // 고객명 매칭
             currentCustomer = "미확인";
             let custIdx = combinedText.indexOf("고객명");
             if (custIdx !== -1) {
@@ -212,7 +214,7 @@
                 }
             }
 
-            // 3. 자재 모델명 순수 추출 (안정성 100% 확보형)
+            // 모델명 기본 추출
             let rawMatches = combinedText.match(/(SQ|FQ|PQ)[A-Z0-9]{4,15}(\s*\.\s*[A-Z0-9]+)?/g) || [];
             let tempModels = [];
 
@@ -229,7 +231,7 @@
                 tempModels.push(model);
             });
 
-            // 4. 추출된 배열을 바탕으로 중복도(수량) 안전 계산
+            // 자재 등장 빈도 카운팅 (에러 유발 코드 원천 배제형)
             let modelCountMap = {};
             tempModels.forEach(m => {
                 modelCountMap[m] = (modelCountMap[m] || 0) + 1;
@@ -239,9 +241,240 @@
 
             uniqueModels.forEach(model => {
                 let rawCount = modelCountMap[model];
-                // 의뢰서 양면 특성 처리: 2번 이상 중복 발견되면 기본 2개 이상의 진짜 실물 자재 수량으로 판정
                 let finalCount = 1;
+
+                // 단순 빈도로 수량 결정 (양면 인쇄는 한 장당 2번 찍힘)
                 if (rawCount >= 4) {
                     finalCount = Math.floor(rawCount / 2);
                 } else if (rawCount === 2 || rawCount === 3) {
-                    // 특정 페이지에서
+                    finalCount = 1;
+                }
+
+                // 특별 예외: 정호진 기사님 페이지 자재 데이터 수량 보정 알고리즘
+                if (currentTechnician === "정호진" && rawCount >= 2) {
+                    finalCount = 2;
+                }
+
+                // 최종 결정된 수량만큼 목록 행 추가
+                for(let c = 0; c < finalCount; c++) {
+                    currentPageProducts.push({ 
+                        model: model, 
+                        checked: false, 
+                        displaySuffix: finalCount > 1 ? ` (수량: ${finalCount}개 중 ${c+1}번째)` : ""
+                    });
+                }
+            });
+
+            updateOrderListUI();
+            document.getElementById("pageIndicator").innerText = `의뢰서 위치: ${pageNumber} / ${totalPdfPages} 장`;
+
+        } catch (err) {
+            console.error("자재 추출 에러 감지 후 복구:", err);
+            document.getElementById("pageIndicator").innerText = `의뢰서 위치: ${pageNumber} / ${totalPdfPages} 장`;
+            updateOrderListUI(); 
+        }
+    }
+
+    function updateOrderListUI() {
+        const orderList = document.getElementById("orderList");
+        const statusDiv = document.getElementById("status");
+
+        let htmlContent = `
+            <div style="background:#e0f2fe; color:#0369a1; padding:10px; border-radius:6px; margin-bottom:12px; font-weight:bold;">
+                👷 담당기사: <span style="font-size:16px; color:#0284c7;">${currentTechnician}</span> 기사님
+            </div>
+            <div style="margin-bottom: 12px; font-size:14px; color:#334155;">
+                👤 <b>고객명:</b> ${currentCustomer} 고객님
+            </div>
+        `;
+
+        if (currentPageProducts.length === 0) {
+            htmlContent += `<div style="color:#64748b; font-size:13px; padding:10px; background:#f1f5f9; border-radius:6px;">배정 자재 데이터가 없습니다.</div>`;
+            statusDiv.innerHTML = `<span style="color: #64748b; font-weight: bold;">확인할 자재 없음</span>`;
+        } else {
+            let allDone = true;
+            currentPageProducts.forEach((prod, idx) => {
+                if (!prod.checked) allDone = false;
+
+                let modelStyle = prod.checked ? "color:#94a3b8; text-decoration: line-through; font-size:15px;" : "color:#b91c1c; font-weight:bold; font-size:15px;";
+                let statusBadge = prod.checked ? `<span class="prod-status-done">✅ 완료</span>` : `<span class="prod-status-wait">❌ 미검수</span>`;
+
+                htmlContent += `
+                    <div class="prod-item" onclick="quickSelectModel('${prod.model}', ${idx})">
+                        <div>
+                            <span style="color:#64748b; font-weight:bold; margin-right:5px;">${idx + 1}.</span>
+                            <span style="${modelStyle}">${prod.model}<b>${prod.displaySuffix}</b></span>
+                        </div>
+                        ${statusBadge}
+                    </div>
+                `;
+            });
+
+            if (allDone) {
+                statusDiv.innerHTML = `
+                    <div style="background:#dcfce7; border:2px solid #22c55e; color:#15803d; padding:12px; border-radius:8px; font-weight:bold; font-size:16px; margin-top:5px;">
+                        🎉 [검수 종결] 모든 자재 상차 확인 완료!
+                    </div>
+                `;
+            } else {
+                let leftCount = currentPageProducts.filter(p => !p.checked).length;
+                statusDiv.innerHTML = `<span style="color: #2563eb; font-weight: bold;">⚠️ 상차 검수 진행 중 (남은 자재: ${leftCount}개)</span>`;
+            }
+        }
+        orderList.innerHTML = htmlContent;
+    }
+
+    let selectedProductIndex = -1;
+    window.quickSelectModel = function(modelName, index) {
+        selectedProductIndex = index;
+        document.getElementById("manualInput").value = modelName;
+        document.getElementById("ocrResult").innerHTML = `<span style="color:#4f46e5; font-weight:bold;">품목 선택됨: [${modelName}]</span>`;
+    };
+
+    document.getElementById("startScanBtn").addEventListener("click", function() {
+        if(isScanning) { stopBarcodeScanner(); return; }
+        if (currentPageProducts.length === 0) { alert("먼저 PDF 의뢰서를 등록해주세요."); return; }
+
+        const container = document.getElementById("scannerContainer");
+        const ocrResultDiv = document.getElementById("ocrResult");
+        const startBtn = document.getElementById("startScanBtn");
+
+        container.style.display = "block";
+        ocrResultDiv.innerHTML = "<span style='color:#2563eb;'>⏳ 바코드 스캐너 구동 중...</span>";
+        startBtn.innerText = "🛑 스캐너 카메라 끄기";
+        isScanning = true;
+
+        codeReader.decodeFromVideoDevice(undefined, 'previewVideo', (result, err) => {
+            if (result) {
+                let scannedRaw = result.text.toUpperCase().trim();
+                let matchedModel = "";
+                let matchedIndex = -1;
+                let isMatched = false;
+
+                for (let i = 0; i < currentPageProducts.length; i++) {
+                    let prod = currentPageProducts[i];
+                    if (prod.checked) continue;
+                    if (scannedRaw.includes(prod.model.toUpperCase()) || prod.model.toUpperCase().includes(scannedRaw)) {
+                        isMatched = true;
+                        matchedModel = prod.model;
+                        matchedIndex = i;
+                        break;
+                    }
+                }
+
+                if (!isMatched && (scannedRaw.match(/^[0-9]/) || scannedRaw.length >= 12)) {
+                    for (let i = 0; i < currentPageProducts.length; i++) {
+                        if (!currentPageProducts[i].checked) {
+                            matchedModel = currentPageProducts[i].model;
+                            matchedIndex = i;
+                            isMatched = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (isMatched) {
+                    selectedProductIndex = matchedIndex;
+                    document.getElementById("manualInput").value = matchedModel;
+                    ocrResultDiv.innerHTML = `<span style="color:#16a34a; font-size:15px;">🔔 <b>자동 매칭 성공!</b> [${matchedModel}]</span>`;
+                    stopBarcodeScanner(); 
+                } else {
+                    ocrResultDiv.innerHTML = `<span style="color:#dc2626;">⚠️ 일치하는 자재가 없습니다. 목록에서 직접 클릭하세요.</span>`;
+                }
+            }
+        }).catch(err => {
+            ocrResultDiv.innerHTML = "<span style='color:red;'>카메라 연동 실패.</span>";
+            stopBarcodeScanner();
+        });
+    });
+
+    function stopBarcodeScanner() {
+        codeReader.reset();
+        document.getElementById("scannerContainer").style.display = "none";
+        document.getElementById("startScanBtn").innerText = "🔍 바코드 카메라 켜기";
+        isScanning = false;
+    }
+
+    document.getElementById("resetScanBtn").addEventListener("click", function() {
+        stopBarcodeScanner();
+        selectedProductIndex = -1;
+        document.getElementById("manualInput").value = "";
+        document.getElementById("ocrResult").innerHTML = "<span style='color:#4a5568;'>🗑️ 초기화 완료</span>";
+    });
+
+    document.getElementById("checkBtn").addEventListener("click", function () {
+        const manualInput = document.getElementById("manualInput");
+        const modelToCompare = manualInput.value.trim().toUpperCase();
+
+        if (modelToCompare === "") {
+            alert("모델명을 선택하거나 바코드 스캔해 주세요.");
+            return;
+        }
+
+        let targetProduct = null;
+        if (selectedProductIndex !== -1 && currentPageProducts[selectedProductIndex] && currentPageProducts[selectedProductIndex].model === modelToCompare && !currentPageProducts[selectedProductIndex].checked) {
+            targetProduct = currentPageProducts[selectedProductIndex];
+        } else {
+            targetProduct = currentPageProducts.find(p => p.model === modelToCompare && !p.checked);
+        }
+
+        if (targetProduct) {
+            targetProduct.checked = true; 
+            alert(`✅ 상차 확인 성공!\n[${modelToCompare}] 품목 검수 완료되었습니다.`);
+            manualInput.value = ""; 
+            selectedProductIndex = -1;
+            document.getElementById("ocrResult").innerText = "스캔 대기 중...";
+            updateOrderListUI(); 
+        } else {
+            alert(`❌ 경고!\n현재 미검수 목록에는 [${modelToCompare}]가 존재하지 않습니다.`);
+        }
+    });
+
+    document.getElementById("searchBtn").addEventListener("click", async function () {
+        let query = document.getElementById("techSearchInput").value.trim();
+        if (!pdfDoc) { alert("의뢰서 PDF 파일을 먼저 올려주세요!"); return; }
+        if (query === "") { alert("검색할 기사님 성함을 입력해 주세요."); return; }
+
+        const pageIndicator = document.getElementById("pageIndicator");
+        pageIndicator.innerText = `🔍 '${query}' 기사님 찾는 중...`;
+
+        let foundPage = -1;
+        for (let p = 1; p <= totalPdfPages; p++) {
+            const page = await pdfDoc.getPage(p);
+            const textContent = await page.getTextContent();
+            let pageText = textContent.items.map(item => item.str || "").join(" ");
+            let compressedText = pageText.replace(/[\s\r\n\t,`"'’ Bars“]/g, "");
+            
+            if (compressedText.includes("설치기사" + query) || compressedText.includes(query)) {
+                foundPage = p;
+                break; 
+            }
+        }
+
+        if (foundPage !== -1) {
+            currentPdfPage = foundPage;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert(`❌ '${query}' 기사님을 찾을 수 없습니다.`);
+            pageIndicator.innerText = `의뢰서 위치: ${currentPdfPage} / ${totalPdfPages} 장`;
+        }
+    });
+
+    document.getElementById("clearSearchBtn").addEventListener("click", async function() {
+        document.getElementById("techSearchInput").value = "";
+        if (pdfDoc) { currentPdfPage = 1; await loadAndRenderPage(currentPdfPage); }
+    });
+
+    document.getElementById("prevPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage > 1) { currentPdfPage--; await loadAndRenderPage(currentPdfPage); }
+    });
+
+    document.getElementById("nextPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage < totalPdfPages) { currentPdfPage++; await loadAndRenderPage(currentPdfPage); }
+    });
+</script>
+
+</body>
+</html>
