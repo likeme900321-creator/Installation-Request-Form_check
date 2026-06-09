@@ -2,56 +2,52 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Daon E.N.G 자재 검수 시스템</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <title>Daon E.N.G 자재 최종 검수기</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
-        .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 10px; }
-        .item { padding: 12px; border: 1px solid #ddd; margin-bottom: 8px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; }
-        .checked { background: #e0f7fa; color: #006064; text-decoration: line-through; }
+        .item { background: white; padding: 12px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
+        .checked { background: #d1fae5; text-decoration: line-through; color: #065f46; }
+        button { padding: 6px 12px; cursor: pointer; background: #2563eb; color: white; border: none; border-radius: 4px; }
     </style>
 </head>
 <body>
-
-<div class="container">
-    <h2>자재 검수 리스트</h2>
+    <h2>자재 상차 검수 리스트</h2>
     <input type="file" id="pdfFile" accept="application/pdf">
-    <div id="techName" style="margin-top:15px; font-weight:bold; color:#1e3a8a;"></div>
     <div id="orderList" style="margin-top:20px;"></div>
-</div>
 
-<script>
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+        document.getElementById("pdfFile").addEventListener("change", async (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const pdf = await pdfjsLib.getDocument({data: new Uint8Array(reader.result)}).promise;
+                const orderList = document.getElementById("orderList");
+                orderList.innerHTML = "";
 
-    document.getElementById("pdfFile").addEventListener("change", async (e) => {
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        reader.onload = async () => {
-            const pdf = await pdfjsLib.getDocument({data: new Uint8Array(reader.result)}).promise;
-            const listDiv = document.getElementById("orderList");
-            listDiv.innerHTML = ""; // 기존 목록 초기화
-
-            for (let i = 1; i <= pdf.numPages; i++) {
-                const page = await pdf.getPage(i);
-                const textContent = await page.getTextContent();
-                const textItems = textContent.items.map(item => item.str);
-                
-                // 페이지별 자재 모델명(SQ, FQ, PQ 시작) 추출
-                textItems.forEach(str => {
-                    const match = str.match(/(SQ|FQ|PQ)[A-Z0-9]{4,15}/);
-                    if (match) {
-                        const model = match[0];
-                        // 단순 나열: 발견되는 즉시 리스트 아이템 추가
-                        const div = document.createElement("div");
-                        div.className = "item";
-                        div.innerHTML = `<span>${model}</span> <button onclick="this.parentElement.classList.add('checked')">상차완료</button>`;
-                        listDiv.appendChild(div);
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const text = (await page.getTextContent()).items.map(it => it.str).join(" ");
+                    
+                    // 정규식 설명: 
+                    // 1. SQ06FA1WAJ 같은 모델은 그냥 찾고
+                    // 2. 나머지는 (SQ|FQ|PQ) 시작 + (AKOR|EKOR|BKOR)로 끝나는 것만 찾음
+                    const regex = /(SQ06FA1WAJ)|((SQ|FQ|PQ)[A-Z0-9]{5,10}\.(AKOR|EKOR|BKOR))/g;
+                    const matches = text.match(regex);
+                    
+                    if (matches) {
+                        [...new Set(matches)].forEach(model => {
+                            const div = document.createElement("div");
+                            div.className = "item";
+                            div.innerHTML = `<span>${model}</span> <button onclick="this.parentElement.classList.add('checked')">확인</button>`;
+                            orderList.appendChild(div);
+                        });
                     }
-                });
-            }
-        };
-        reader.readAsArrayBuffer(file);
-    });
-</script>
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+    </script>
 </body>
 </html>
