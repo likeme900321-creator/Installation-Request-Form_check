@@ -330,37 +330,39 @@ currentPageTargetModels = uniqueProducts.map(p => p.model);
         const ocrResultDiv = document.getElementById("ocrResult");
         
         manualInput.value = "";
-        ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 현재 페이지 기사님 자재와 매칭 분석 중...</span>";
+        ocrResultDiv.innerHTML = "<span style='color: #2563eb; font-weight: bold;'>⏳ 바코드 인식 및 모델명 대조 중...</span>";
 
         try {
+            // Tesseract의 화이트리스트를 강화하고 인식 효율을 높임
             const result = await Tesseract.recognize(photoFile, 'eng', {
-                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
-                corePath: 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.0/tesseract-core.wasm.js'
+                tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                psm: 7 // 7은 '한 줄의 텍스트'를 읽을 때 가장 정확한 모드입니다.
             });
             
-            let detectedText = result.data.text.replace(/[\s\r\n\t]/g, '').toUpperCase();
-            let isMatched = false;
-            let matchedModel = "";
+            // 텍스트를 정리하고 우리가 찾는 패턴(SQ..., FQ...)만 필터링
+            const rawText = result.data.text.toUpperCase();
+            const foundPattern = rawText.match(/(SQ|FQ)[A-Z0-9]{4,10}/);
+            
+            let detectedModel = foundPattern ? foundPattern[0] : null;
 
-            for (let model of currentPageTargetModels) {
-                if (detectedText.includes(model)) {
-                    isMatched = true;
-                    matchedModel = model;
-                    break;
+            // 만약 패턴이 발견되면 currentPageTargetModels와 비교
+            if (detectedModel) {
+                // 혹시 모르니 타겟 목록에 있는 모델명과 가장 유사한지 확인
+                const matchedModel = currentPageTargetModels.find(m => m.includes(detectedModel) || detectedModel.includes(m.split('.')[0]));
+
+                if (matchedModel) {
+                    manualInput.value = matchedModel;
+                    ocrResultDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">✅ 모델 인식 성공: ${matchedModel}</span>`;
+                } else {
+                    ocrResultDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">❌ 인식된 '${detectedModel}'은(는) 이 기사님 배정 자재가 아닙니다.</span>`;
                 }
-            }
-
-            if (isMatched) {
-                manualInput.value = matchedModel;
-                ocrResultDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">✅ 일치 확인 (${matchedModel})!</span>`;
             } else {
-                manualInput.value = "";
-                ocrResultDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">❌ 이 차량 배정 자재가 아닙니다! 확인하세요.</span>`;
+                ocrResultDiv.innerHTML = `<span style="color: #d97706; font-weight: bold;">⚠️ 모델명을 읽지 못했습니다. 가까이서 다시 촬영해 주세요.</span>`;
             }
 
         } catch (err) {
             console.error(err);
-            ocrResultDiv.innerHTML = "<span style='color: red;'>사진 인식 실패 (수동 입력 필요)</span>";
+            ocrResultDiv.innerHTML = "<span style='color: red;'>카메라 인식 오류. 다시 시도해 주세요.</span>";
         }
     });
 
