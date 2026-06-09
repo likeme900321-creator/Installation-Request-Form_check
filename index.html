@@ -341,26 +341,23 @@ currentPageTargetModels = uniqueProducts.map(p => p.model);
     });
 
     // [6] 최종 검수 확정 도장
-    document.getElementById("checkBtn").addEventListener("click", function () {
-        const manualInput = document.getElementById("manualInput");
-        const statusDiv = document.getElementById("status");
-        const modelToCompare = manualInput.value.trim().toUpperCase();
+    document.getElementById("checkBtn").addEventListener("click", () => {
+        const val = document.getElementById("manualInput").value.trim().toUpperCase();
+        const cleanId = val.replace(/[^a-zA-Z0-9]/g, '');
+        const targetDiv = document.getElementById(`model-${cleanId}`);
 
-        if (modelToCompare === "") {
-            alert("모델명을 직접 입력하거나 사진 스캔을 먼저 해주세요.");
-            return;
-        }
-
-        const isFinalCheckPassed = currentPageTargetModels.includes(modelToCompare);
-
-        if (isFinalCheckPassed) {
-            alert(`✅ 검수 성공!\n현재 기사님의 정상 상차 자재입니다: ${modelToCompare}`);
-            statusDiv.innerHTML = `<span style="color: #16a34a; font-weight: bold;">상차 완료 승인 (${modelToCompare})</span>`;
+        if (currentPageTargetModels.includes(val)) {
+            if (targetDiv) {
+                targetDiv.style.textDecoration = "line-through";
+                targetDiv.style.color = "#94a3b8";
+                targetDiv.innerHTML += " ✅";
+            }
+            document.getElementById("status").innerHTML = `<span style="color:green;">✅ 검수 완료</span>`;
         } else {
-            alert(`❌ 경고! 오상차 위험!\n현재 활성화된 기사님 품목 리스트에는 [${modelToCompare}]가 없습니다.`);
-            statusDiv.innerHTML = `<span style="color: #dc2626; font-weight: bold;">⚠️ 오상차 위험 품목 감지</span>`;
+            document.getElementById("status").innerHTML = `<span style="color:red;">❌ 목록에 없는 모델입니다.</span>`;
         }
     });
+    
 </script>
 
 </body>
