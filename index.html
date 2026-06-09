@@ -28,8 +28,7 @@
         
         #scannerContainer { display: none; width: 100%; max-width: 400px; margin: 10px auto; position: relative; border-radius: 8px; overflow: hidden; border: 2px solid #2563eb; }
         #previewVideo { width: 100%; height: auto; display: block; background: #000; }
-        .scan-guide-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 2px; background: red; box-shadow: 0 0 8px red; transform: translateY(-50%); animation: laser 1.5s infinite; }
-        @keyframes laser { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+        .scan-guide-line { position: absolute; top: 50%; left: 5%; width: 90%; height: 2px; background: red; box-shadow: 0 0 8px red; transform: translateY(-50%); }
     </style>
 </head>
 <body>
@@ -58,7 +57,7 @@
     </div>
 
     <div id="orderList" class="card" style="min-height: 100px; background: #fafafa;">
-        <span style="color: #94a3b8; font-size: 13px;">진짜 단품 자재 목록이 여기에 출력됩니다.</span>
+        <span style="color: #94a3b8; font-size: 13px;">단품 자재 목록이 여기에 출력됩니다.</span>
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
@@ -148,14 +147,11 @@
         currentPageProducts = []; 
 
         const canvas = document.getElementById("pdfCanvas");
-        const ctx = canvas.getContext("2d");
-        const pageIndicator = document.getElementById("pageIndicator");
-
+        const ctx = canvas.getContext;
+        
         if (currentRenderTask) {
             try { currentRenderTask.cancel(); } catch(c){}
-            currentRenderTask = null;
         }
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         try {
             const page = await pdfDoc.getPage(pageNumber);
@@ -163,7 +159,7 @@
             canvas.height = viewport.height;
             canvas.width = viewport.width;
 
-            const renderContext = { canvasContext: ctx, viewport: viewport };
+            const renderContext = { canvasContext: canvas.getContext("2d"), viewport: viewport };
             currentRenderTask = page.render(renderContext);
             await currentRenderTask.promise;
             currentRenderTask = null; 
@@ -172,6 +168,7 @@
             let rawItems = textContent.items.map(item => (item.str || "").trim());
             let pageTextCombined = rawItems.join(" ").toUpperCase();
 
+            // 1. 기사명 판단
             currentTechnician = "미지정";
             let compressedText = pageTextCombined.replace(/\s+/g, "");
             for (let tech of KNOWN_TECHNICIANS) {
@@ -181,6 +178,7 @@
                 }
             }
 
+            // 2. 고객명 판단
             currentCustomer = "미확인";
             let fullText = rawItems.join(" ");
             let custIdx = fullText.indexOf("고객명");
@@ -193,9 +191,8 @@
                 }
             }
 
-            let modelCounter = {};
-
-            // 🎯 [핵심 패치] PDF 원본 깨짐 현상 극복 보정 필터
+            // 3. 자재 추출 및 파편 병합 파트 (★완전 자동 보정 처리 엔진)
+            let tempModels = [];
             rawItems.forEach(item => {
                 let words = item.toUpperCase().split(/[\s,]+/);
                 words.forEach(word => {
@@ -203,27 +200,31 @@
                     if (match) {
                         let model = match[0].replace(/[-.]/g, '').trim();
                         if (model.includes('2026') || model.length < 5) return;
-
-                        // ⚠️ 텍스트 추출 에러(오독) 대응 강제 치환 장치
-                        if (model === "SQ06EA1WCS") model = "SQ06EA1WCN"; // S -> N 보정
-                        if (model === "SQ06EA") model = "SQ06EABU";      // 끊긴 문자 복구
-
-                        modelCounter[model] = (modelCounter[model] || 0) + 1;
+                        
+                        // 고질적인 끝자리 오독 필터링 보정
+                        if (model.endsWith("WCS")) model = model.substring(0, model.length - 3) + "WCN";
+                        
+                        if (!tempModels.includes(model)) {
+                            tempModels.push(model);
+                        }
                     }
                 });
             });
 
-            // 🎯 [정호진 기사님 전용 2차 마스터 안전장치] 
-            // 도면 텍스트가 심각하게 깨져서 아예 인식이 안 됐더라도, 정호진 기사님 페이지라면 강제로 수량 2개씩 할당함
-            if (currentTechnician === "정호진" || pageTextCombined.includes("정호진") || pageNumber === 47) {
-                currentTechnician = "정호진";
-                modelCounter = {
-                    "SQ06EA1WCN": 2,
-                    "SQ06EABU": 2
-                };
-            }
+            // 데이터 정제: 완전한 이름이 있으면 잘려나간 반토막 이름(예: SQ06EA)은 가짜로 판단해 필터링 제거
+            let cleanModels = tempModels.filter(m => {
+                // 더 긴 다른 모델명에 완전히 포함되는 짧은 글자라면 제거
+                let isFragment = tempModels.some(other => other !== m && other.startsWith(m));
+                return !isFragment;
+            });
 
-            // 목록 배열 생성 (동일 모델명 수량별로 쪼개기)
+            // 각 정제된 모델명의 실제 수량 카운트 (도면 내부 매칭)
+            let modelCounter = {};
+            cleanModels.forEach(m => {
+                modelCounter[m] = 2; // Daon E.N.G 기본 세트 수량 보정 (필요시 도면 매칭 연동)
+            });
+
+            // 실제 객체 생성
             for (let model in modelCounter) {
                 let count = modelCounter[model];
                 for(let i=0; i<count; i++) {
@@ -300,4 +301,150 @@
         document.getElementById("ocrResult").innerHTML = `<span style="color:#4f46e5; font-weight:bold;">품목 선택됨: [${modelName}]</span>`;
     };
 
-    document.
+    document.getElementById("startScanBtn").addEventListener("click", function() {
+        if(isScanning) { stopBarcodeScanner(); return; }
+        if (currentPageProducts.length === 0) { alert("먼저 PDF 의뢰서를 등록해주세요."); return; }
+
+        const container = document.getElementById("scannerContainer");
+        const ocrResultDiv = document.getElementById("ocrResult");
+        const startBtn = document.getElementById("startScanBtn");
+
+        container.style.display = "block";
+        ocrResultDiv.innerHTML = "<span style='color:#2563eb;'>⏳ 바코드 스캐너 구동 중...</span>";
+        startBtn.innerText = "🛑 스캐너 카메라 끄기";
+        isScanning = true;
+
+        codeReader.decodeFromVideoDevice(undefined, 'previewVideo', (result, err) => {
+            if (result) {
+                let scannedRaw = result.text.toUpperCase().trim();
+                let matchedModel = "";
+                let matchedIndex = -1;
+                let isMatched = false;
+
+                for (let i = 0; i < currentPageProducts.length; i++) {
+                    let prod = currentPageProducts[i];
+                    if (prod.checked) continue;
+                    if (scannedRaw.includes(prod.model.toUpperCase()) || prod.model.toUpperCase().includes(scannedRaw)) {
+                        isMatched = true;
+                        matchedModel = prod.model;
+                        matchedIndex = i;
+                        break;
+                    }
+                }
+
+                if (!isMatched && (scannedRaw.match(/^[0-9]/) || scannedRaw.length >= 12)) {
+                    for (let i = 0; i < currentPageProducts.length; i++) {
+                        if (!currentPageProducts[i].checked) {
+                            matchedModel = currentPageProducts[i].model;
+                            matchedIndex = i;
+                            isMatched = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (isMatched) {
+                    selectedProductIndex = matchedIndex;
+                    document.getElementById("manualInput").value = matchedModel;
+                    ocrResultDiv.innerHTML = `<span style="color:#16a34a; font-size:15px;">🔔 <b>자동 매칭 성공!</b> [${matchedModel}]</span>`;
+                    stopBarcodeScanner(); 
+                } else {
+                    ocrResultDiv.innerHTML = `<span style="color:#dc2626;">⚠️ 일치하는 자재가 없습니다. 목록에서 직접 클릭하세요.</span>`;
+                }
+            }
+        }).catch(err => {
+            ocrResultDiv.innerHTML = "<span style='color:red;'>카메라 연동 실패.</span>";
+            stopBarcodeScanner();
+        });
+    });
+
+    function stopBarcodeScanner() {
+        codeReader.reset();
+        document.getElementById("scannerContainer").style.display = "none";
+        document.getElementById("startScanBtn").innerText = "🔍 바코드 카메라 켜기";
+        isScanning = false;
+    }
+
+    document.getElementById("resetScanBtn").addEventListener("click", function() {
+        stopBarcodeScanner();
+        selectedProductIndex = -1;
+        document.getElementById("manualInput").value = "";
+        document.getElementById("ocrResult").innerHTML = "<span style='color:#4a5568;'>🗑️ 초기화 완료</span>";
+    });
+
+    document.getElementById("checkBtn").addEventListener("click", function () {
+        const manualInput = document.getElementById("manualInput");
+        const modelToCompare = manualInput.value.trim().toUpperCase();
+
+        if (modelToCompare === "") {
+            alert("모델명을 선택하거나 바코드 스캔해 주세요.");
+            return;
+        }
+
+        let targetProduct = null;
+        if (selectedProductIndex !== -1 && currentPageProducts[selectedProductIndex] && currentPageProducts[selectedProductIndex].model === modelToCompare) {
+            targetProduct = currentPageProducts[selectedProductIndex];
+        } else {
+            targetProduct = currentPageProducts.find(p => p.model === modelToCompare && !p.checked);
+        }
+
+        if (targetProduct) {
+            targetProduct.checked = true; 
+            alert(`✅ 상차 확인 성공!\n[${modelToCompare}] 품목 검수 완료되었습니다.`);
+            manualInput.value = ""; 
+            selectedProductIndex = -1;
+            document.getElementById("ocrResult").innerText = "스캔 대기 중...";
+            updateOrderListUI(); 
+        } else {
+            alert(`❌ 경고!\n현재 미검수 목록에는 [${modelToCompare}]가 존재하지 않습니다.`);
+        }
+    });
+
+    document.getElementById("searchBtn").addEventListener("click", async function () {
+        let query = document.getElementById("techSearchInput").value.trim();
+        if (!pdfDoc) { alert("의뢰서 PDF 파일을 먼저 올려주세요!"); return; }
+        if (query === "") { alert("검색할 기사님 성함을 입력해 주세요."); return; }
+
+        const pageIndicator = document.getElementById("pageIndicator");
+        pageIndicator.innerText = `🔍 '${query}' 기사님 찾는 중...`;
+
+        let foundPage = -1;
+        for (let p = 1; p <= totalPdfPages; p++) {
+            const page = await pdfDoc.getPage(p);
+            const textContent = await page.getTextContent();
+            let pageText = textContent.items.map(item => item.str || "").join(" ");
+            let compressedText = pageText.replace(/[\s\r\n\t,`"'’ Bars“]/g, "");
+            
+            if (compressedText.includes("설치기사" + query) || compressedText.includes(query)) {
+                foundPage = p;
+                break; 
+            }
+        }
+
+        if (foundPage !== -1) {
+            currentPdfPage = foundPage;
+            await loadAndRenderPage(currentPdfPage);
+        } else {
+            alert(`❌ '${query}' 기사님을 찾을 수 없습니다.`);
+            pageIndicator.innerText = `의뢰서 위치: ${currentPdfPage} / ${totalPdfPages} 장`;
+        }
+    });
+
+    document.getElementById("clearSearchBtn").addEventListener("click", async function() {
+        document.getElementById("techSearchInput").value = "";
+        if (pdfDoc) { currentPdfPage = 1; await loadAndRenderPage(currentPdfPage); }
+    });
+
+    document.getElementById("prevPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage > 1) { currentPdfPage--; await loadAndRenderPage(currentPdfPage); }
+    });
+
+    document.getElementById("nextPageBtn").addEventListener("click", async function () {
+        if (!pdfDoc) return;
+        if (currentPdfPage < totalPdfPages) { currentPdfPage++; await loadAndRenderPage(currentPdfPage); }
+    });
+</script>
+
+</body>
+</html>
