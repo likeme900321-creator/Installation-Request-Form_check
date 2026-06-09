@@ -343,23 +343,44 @@ currentPageTargetModels = uniqueProducts.map(p => p.model);
     });
 
 
-    // [5) 실시간 바코드 스캔
-    document.getElementById("startScanBtn").addEventListener("click", () => {
-        document.getElementById("scanner-container").style.display = "block";
-        Quagga.init({
-            inputStream: { type: "LiveStream", target: document.querySelector('#scanner-container'), constraints: { facingMode: "environment" } },
-            decoder: { readers: ["code_128_reader"] }
-        }, () => Quagga.start());
-
-        Quagga.onDetected((result) => {
-            if (currentPageTargetModels.includes(result.codeResult.code)) {
-                document.getElementById("manualInput").value = result.codeResult.code;
-                document.getElementById("ocrResult").innerHTML = "✅ 인식 성공: " + result.codeResult.code;
-                Quagga.stop();
-                document.getElementById("scanner-container").style.display = "none";
-            }
-        });
+    // [5] 실시간 바코드 스캔
+document.getElementById("startScanBtn").addEventListener("click", () => {
+    const scanner = document.getElementById("scanner-container");
+    scanner.style.display = "block";
+    
+    Quagga.init({
+        inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector('#scanner-container'),
+            constraints: { facingMode: "environment" } // 후면 카메라 우선
+        },
+        decoder: {
+            readers: ["code_128_reader", "ean_reader", "upc_reader"] // 인식 범위 확대
+        }
+    }, function(err) {
+        if (err) {
+            console.error(err);
+            alert("카메라를 사용할 수 없습니다. 권한을 확인해주세요.");
+            return;
+        }
+        Quagga.start();
     });
+
+    Quagga.onDetected((result) => {
+        const code = result.codeResult.code;
+        if (currentPageTargetModels.includes(code)) {
+            document.getElementById("manualInput").value = code;
+            document.getElementById("ocrResult").innerHTML = "✅ 인식 성공: " + code;
+            
+            // 검수 완료 표시 기능 호출
+            document.getElementById("checkBtn").click(); 
+            
+            Quagga.stop();
+            scanner.style.display = "none";
+        }
+    });
+});
 
     // [6] 최종 검수 확정 도장 로직 내부 수정
 document.getElementById("checkBtn").addEventListener("click", function () {
