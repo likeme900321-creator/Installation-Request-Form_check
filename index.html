@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Daon E.N.G 자재 정밀 검수 시스템</title>
+    <title>Daon E.N.G 자재 검수 시스템</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
         .item { background: white; padding: 12px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
@@ -30,28 +30,22 @@
 
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
-                    const textContent = await page.getTextContent();
+                    const text = (await page.getTextContent()).items.map(it => it.str).join(" ");
                     
-                    // 텍스트를 줄 단위로 재구성
-                    let items = textContent.items;
+                    // 1. SQ/FQ로 시작하는 모델코드만 추출 (PQ 제외)
+                    // .AKOR 등 뒤에 붙은 것은 일단 다 잘라내고 모델명만 가져옴
+                    const matches = text.match(/(SQ|FQ)[A-Z0-9]{4,15}/g);
                     
-                    items.forEach(item => {
-                        let text = item.str.trim();
-                        
-                        // 1. SQ 또는 FQ로 시작하는 것만 추출
-                        // 2. PQ는 필터링
-                        // 3. 세트 모델명은 보통 매우 긴 숫자이므로 길이를 제한 (예: 12자 미만)
-                        if ((text.startsWith("SQ") || text.startsWith("FQ")) && !text.startsWith("PQ") && text.length < 15) {
-                            
-                            // 특수 확장자(BKOR, EKOR)가 포함된 경우만 살리고, AKOR은 제거
-                            let cleanModel = text.replace(".AKOR", "");
-                            
-                            // 최종 검증: 불필요한 세트 모델명(숫자가 주를 이루는 패턴) 제외
-                            if (/[A-Z]{2}[0-9]{2}[A-Z0-9]{4,}/.test(cleanModel)) {
-                                foundModels.add(cleanModel);
+                    if (matches) {
+                        matches.forEach(m => {
+                            if (!m.startsWith("PQ") && m.length < 12) {
+                                // 2. 만약 원본 텍스트에 .BKOR이나 .EKOR이 붙어있었다면 다시 붙여줌
+                                if (text.includes(m + ".BKOR")) foundModels.add(m + ".BKOR");
+                                else if (text.includes(m + ".EKOR")) foundModels.add(m + ".EKOR");
+                                else foundModels.add(m); // .AKOR은 붙이지 않음
                             }
-                        }
-                    });
+                        });
+                    }
                 }
 
                 [...foundModels].sort().forEach(model => {
