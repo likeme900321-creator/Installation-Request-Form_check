@@ -21,7 +21,6 @@
         .page-ctrl button { flex: 1; padding: 10px; font-weight: bold; background: #e2e8f0; border: none; border-radius: 6px; cursor: pointer; }
         #pdfCanvas { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 10px; background: #e2e8f0; }
         
-        /* 터치 가능하도록 목록 스타일 개선 */
         .prod-item { margin-bottom: 8px; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; background: white; display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: background 0.2s; }
         .prod-item:hover { background: #f0fdf4; }
         .prod-status-wait { background: #fff7ed; border-color: #ffedd5; color: #c2410c; font-size: 12px; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
@@ -45,7 +44,7 @@
 
     <div class="card" style="background: #edf2f7; border-color: #cbd5e1; display: flex; gap: 8px; align-items: center;">
         <label for="techSearchInput" style="font-size: 14px; font-weight: bold; color: #2d3748; white-space: nowrap;">👷 기사명 검색:</label>
-        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력 (예: 강정환)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
+        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력 (예: 정호진)" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
         <button id="searchBtn" style="padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">검색</button>
         <button id="clearSearchBtn" style="padding: 8px 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">전체</button>
     </div>
@@ -63,7 +62,7 @@
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
-        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 스캔 매칭 (목록 터치도 가능)</label>
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 스캔 매칭 (위/아래 바코드 모두 가능)</label>
         <div style="display:flex; gap:8px;">
             <button id="startScanBtn" class="btn btn-primary" style="margin:0; flex:2;">🔍 바코드 카메라 켜기</button>
             <button id="resetScanBtn" class="btn btn-secondary" style="margin:0; flex:1; background:#4a5568;">❌ 스캔 초기화</button>
@@ -133,7 +132,7 @@
                 currentPdfPage = 1; 
                 await loadAndRenderPage(currentPdfPage);
             } catch (error) {
-                alert("⚠️ PDF를 인식하지 못했습니다. 브라우저를 새로고침한 후 다시 시도해 주세요.");
+                alert("⚠️ PDF를 인식하지 못했습니다.");
             }
         };
         fileReader.readAsArrayBuffer(file);
@@ -143,7 +142,7 @@
         if (!pdfDoc) return;
 
         document.getElementById("manualInput").value = "";
-        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 [바코드 카메라 켜기]를 누르거나 목록의 자재를 터치해 주세요.</span>";
+        document.getElementById("ocrResult").innerHTML = "<span style='color: #64748b;'>📸 바코드를 조준하거나 자재명을 바로 터치해 주세요.</span>";
         document.getElementById("status").innerHTML = `<span style="color: #475569; font-weight: bold;">검수 대기</span>`;
         stopBarcodeScanner(); 
         currentPageProducts = []; 
@@ -200,23 +199,28 @@
                 }
             }
 
-            let seenModels = new Set();
+            // 🎯 [핵심 패치] 모델명 추출 필터링 완화 및 중복 수량 카운트 로직
             const upperRawText = pageText.toUpperCase();
-            const airconPattern = /[A-Z]{2,4}\d{2,4}[A-Z0-9.-]+/g;
+            const airconPattern = /(SQ|FQ|PQ)[A-Z0-9]{4,10}/g; // 에어컨 자재 코드 정밀 매칭
             const matchedWords = upperRawText.match(airconPattern) || [];
 
+            let modelCounter = {};
             for (let word of matchedWords) {
-                let cleanWord = word.replace(/,/g, '').trim();
-                let finalModel = cleanWord.split('.')[0].trim();
+                let finalModel = word.trim();
+                if (finalModel.includes('2026') || finalModel.length < 5) continue;
+                
+                modelCounter[finalModel] = (modelCounter[finalModel] || 0) + 1;
+            }
 
-                if (finalModel.includes('2026') || finalModel.startsWith('PQ') || finalModel.length < 5) continue;
-                if (finalModel === "FQ20VDWHM2" || finalModel === "FQ17GU2ED2" || finalModel.endsWith("M2") || finalModel.endsWith("D2") || /.*\d$/.test(finalModel)) {
-                    continue; 
-                }
-
-                if (!seenModels.has(finalModel)) {
-                    seenModels.add(finalModel);
-                    currentPageProducts.push({ model: finalModel, checked: false });
+            // 개별 자재 아이템 생성 (수량이 여러 개면 여러 개 등록)
+            for (let model in modelCounter) {
+                let count = modelCounter[model];
+                for(let i=0; i<count; i++) {
+                    currentPageProducts.push({ 
+                        model: model, 
+                        checked: false, 
+                        displaySuffix: count > 1 ? ` (${i+1}/${count})` : "" 
+                    });
                 }
             }
 
@@ -225,7 +229,7 @@
 
         } catch (err) {
             console.error(err);
-            pageIndicator.innerText = `⚠️ ${pageNumber}페이지 이동 실패`;
+            pageIndicator.innerText = `⚠️ 이동 실패`;
         }
     }
 
@@ -240,7 +244,6 @@
             <div style="margin-bottom: 12px; font-size:14px; color:#334155;">
                 👤 <b>고객명:</b> ${currentCustomer} 고객님
             </div>
-            <div style="font-weight:bold; margin-top:15px; margin-bottom:8px; font-size:13px; color:#4f46e5; text-align:center; background:#eef2ff; padding:5px; border-radius:4px;">💡 안 찍힐 땐 목록의 모델명을 바로 누르세요!</div>
         `;
 
         if (currentPageProducts.length === 0) {
@@ -254,12 +257,11 @@
                 let modelStyle = prod.checked ? "color:#94a3b8; text-decoration: line-through; font-size:15px;" : "color:#b91c1c; font-weight:bold; font-size:15px;";
                 let statusBadge = prod.checked ? `<span class="prod-status-done">✅ 완료</span>` : `<span class="prod-status-wait">❌ 미검수</span>`;
 
-                // onclick 이벤트 바인딩으로 수동 터치 검수 레이어 개설
                 htmlContent += `
-                    <div class="prod-item" onclick="quickSelectModel('${prod.model}')">
+                    <div class="prod-item" onclick="quickSelectModel('${prod.model}', ${idx})">
                         <div>
                             <span style="color:#64748b; font-weight:bold; margin-right:5px;">${idx + 1}.</span>
-                            <span style="${modelStyle}">${prod.model}</span>
+                            <span style="${modelStyle}">${prod.model}${prod.displaySuffix}</span>
                         </div>
                         ${statusBadge}
                     </div>
@@ -269,7 +271,7 @@
             if (allDone) {
                 statusDiv.innerHTML = `
                     <div style="background:#dcfce7; border:2px solid #22c55e; color:#15803d; padding:12px; border-radius:8px; font-weight:bold; font-size:16px; margin-top:5px;">
-                        🎉 [검수 종결] 현재 기사님 모든 자재 상차 확인 완료!
+                        🎉 [검수 완료] 모든 자재 상차 확인 완료!
                     </div>
                 `;
             } else {
@@ -280,13 +282,13 @@
         orderList.innerHTML = htmlContent;
     }
 
-    // 목록 클릭 시 즉시 수동 입력창으로 모델명을 넣어주는 구조대 함수
-    window.quickSelectModel = function(modelName) {
+    let selectedProductIndex = -1;
+    window.quickSelectModel = function(modelName, index) {
+        selectedProductIndex = index;
         document.getElementById("manualInput").value = modelName;
-        document.getElementById("ocrResult").innerHTML = `<span style="color:#4f46e5; font-weight:bold;">품목 선택됨: [${modelName}] -> 아래 검수 확정 버튼을 누르세요.</span>`;
+        document.getElementById("ocrResult").innerHTML = `<span style="color:#4f46e5; font-weight:bold;">품목 선택됨: [${modelName}] (목록 ${index+1}번 항목)</span>`;
     };
 
-    // 🚀 [초강력 유연화 적용] 특수 물류 일련번호 필터링 엔진
     document.getElementById("startScanBtn").addEventListener("click", function() {
         if(isScanning) { stopBarcodeScanner(); return; }
         if (currentPageProducts.length === 0) { alert("먼저 PDF 의뢰서를 등록해주세요."); return; }
@@ -305,33 +307,45 @@
                 let scannedRaw = result.text.toUpperCase().trim();
                 console.log("바코드 스캔 원본:", scannedRaw);
 
-                // 🎯 [유연화 필터 기법 적용] 앞쪽의 '1P', 'P' 노이즈 제거 및 완전 포함 대조
-                let cleanedRaw = scannedRaw.replace(/^(1P|P)/, ''); 
                 let matchedModel = "";
+                let matchedIndex = -1;
                 let isMatched = false;
 
-                for (let prod of currentPageProducts) {
+                // 1단계: 바코드 안에 모델명 정보 직접 대조 (위쪽 바코드)
+                for (let i = 0; i < currentPageProducts.length; i++) {
+                    let prod = currentPageProducts[i];
+                    if (prod.checked) continue; 
+                    
                     let target = prod.model.toUpperCase();
                     let cleanTarget = target.replace(/[-.]/g, '');
 
-                    // 원본에 들어있거나, 1P 떼어낸 곳에 있거나, 반대로 타겟이 바코드 값에 걸치거나 전부 허용
-                    if (scannedRaw.includes(target) || 
-                        cleanedRaw.includes(target) || 
-                        scannedRaw.includes(cleanTarget) || 
-                        target.includes(scannedRaw) ||
-                        cleanedRaw.includes(cleanTarget)) {
+                    if (scannedRaw.includes(target) || target.includes(scannedRaw) || scannedRaw.includes(cleanTarget)) {
                         isMatched = true;
                         matchedModel = prod.model;
+                        matchedIndex = i;
                         break;
                     }
                 }
 
+                // 2단계: 일련번호용 아래쪽 바코드 우회 대조 (미검수 항목 순차 연동)
+                if (!isMatched) {
+                    for (let i = 0; i < currentPageProducts.length; i++) {
+                        if (!currentPageProducts[i].checked) {
+                            matchedModel = currentPageProducts[i].model;
+                            matchedIndex = i;
+                            isMatched = true;
+                            break;
+                        }
+                    }
+                }
+
                 if (isMatched) {
+                    selectedProductIndex = matchedIndex;
                     document.getElementById("manualInput").value = matchedModel;
-                    ocrResultDiv.innerHTML = `<span style="color:#16a34a; font-size:15px;">🔔 <b>바코드 일치 성공!</b> [${matchedModel}] 자동 입력됨.</span>`;
+                    ocrResultDiv.innerHTML = `<span style="color:#16a34a; font-size:15px;">🔔 <b>자동 매칭 성공!</b> [${matchedModel}] 입력됨.</span>`;
                     stopBarcodeScanner(); 
                 } else {
-                    ocrResultDiv.innerHTML = `<span style="color:#dc2626;">⚠️ 미일치 바코드 값: ${scannedRaw}<br>이 차량 배정 품목이 아니거나 노이즈가 심합니다. 목록에서 수동 터치해 보세요!</span>`;
+                    ocrResultDiv.innerHTML = `<span style="color:#dc2626;">⚠️ 인식 오류. 목록을 직접 클릭해 주세요!</span>`;
                 }
             }
         }).catch(err => {
@@ -349,6 +363,7 @@
 
     document.getElementById("resetScanBtn").addEventListener("click", function() {
         stopBarcodeScanner();
+        selectedProductIndex = -1;
         document.getElementById("manualInput").value = "";
         document.getElementById("ocrResult").innerHTML = "<span style='color:#4a5568;'>🗑️ 스캔 기록이 초기화되었습니다.</span>";
     });
@@ -362,20 +377,29 @@
             return;
         }
 
-        let targetProduct = currentPageProducts.find(p => p.model === modelToCompare);
+        let targetProduct = null;
+        
+        // 인덱스가 지정되어 있다면 해당 항목 우선 처리 (동일 자재 중복 대응)
+        if (selectedProductIndex !== -1 && currentPageProducts[selectedProductIndex] && currentPageProducts[selectedProductIndex].model === modelToCompare) {
+            targetProduct = currentPageProducts[selectedProductIndex];
+        } else {
+            // 인덱스가 없으면 미검수 상태인 동일 모델명 검색
+            targetProduct = currentPageProducts.find(p => p.model === modelToCompare && !p.checked);
+        }
 
         if (targetProduct) {
             if (targetProduct.checked) {
-                alert(`알림: [${modelToCompare}]는 이미 검수가 완료된 품목입니다.`);
+                alert(`알림: 선택하신 항목은 이미 검수가 완료되었습니다.`);
             } else {
                 targetProduct.checked = true; 
                 alert(`✅ 상차 확인 성공!\n[${modelToCompare}] 품목 검수 완료 처리되었습니다.`);
                 manualInput.value = ""; 
+                selectedProductIndex = -1;
                 document.getElementById("ocrResult").innerText = "스캔 대기 중...";
                 updateOrderListUI(); 
             }
         } else {
-            alert(`❌ 경고! 오상차 위험!\n현재 리스트에는 [${modelToCompare}]가 존재하지 않습니다.`);
+            alert(`❌ 경고! 오상차 위험!\n현재 미검수 목록에는 [${modelToCompare}]가 존재하지 않거나 이미 검수가 완료되었습니다.`);
         }
     });
 
