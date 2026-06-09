@@ -129,24 +129,7 @@
         document.getElementById("status").innerHTML = currentPageTargetModels.includes(val) ? "✅ 검수 완료" : "❌ 오류";
     });
 
-    // 검수 확정 및 시각화 로직
-    document.getElementById("checkBtn").addEventListener("click", () => {
-        const val = document.getElementById("manualInput").value.trim().toUpperCase();
-        const cleanId = val.replace(/[^a-zA-Z0-9]/g, '');
-        const targetDiv = document.getElementById(`model-${cleanId}`);
-
-        if (currentPageTargetModels.includes(val)) {
-            if (targetDiv) {
-                targetDiv.style.textDecoration = "line-through";
-                targetDiv.style.color = "#94a3b8";
-                targetDiv.innerHTML += " ✅";
-            }
-            document.getElementById("status").innerHTML = `<span style="color:green;">✅ 검수 완료</span>`;
-        } else {
-            document.getElementById("status").innerHTML = `<span style="color:red;">❌ 목록에 없는 모델입니다.</span>`;
-        }
-    });
-
+   
     
 </script>
 </body>
