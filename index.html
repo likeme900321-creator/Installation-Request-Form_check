@@ -32,25 +32,19 @@
                     const page = await pdf.getPage(i);
                     const text = (await page.getTextContent()).items.map(it => it.str).join(" ");
                     
-                    // 1. 모든 가능한 모델 코드 패턴 추출 (공백 포함 가능성 대비)
-                    const rawMatches = text.match(/(SQ|FQ|PQ)[A-Z0-9]{4,15}(\s*\.\s*[A-Z]{4})?/g);
+                    // 1. SQ 또는 FQ로 시작하고, 끝이 정해진 확장자로 끝나는 패턴만 찾음
+                    // 2. 숫자로만 끝나는(세트 모델명) 경우는 아예 패턴에서 제외됨
+                    const regex = /(SQ|FQ)[A-Z0-9]{4,15}\.(AKOR|EKOR|BKOR)/g;
+                    const matches = text.match(regex);
                     
-                    if (rawMatches) {
-                        rawMatches.forEach(rawModel => {
-                            let cleanModel = rawModel.replace(/\s+/g, ""); // 공백 제거
-                            
-                            // 2. PQ로 시작하면 무조건 패스
-                            if (cleanModel.startsWith("PQ")) return;
-                            
-                            // 3. 확장자(AKOR, EKOR, BKOR)가 포함된 것만 최종 승인
-                            if (/\.(AKOR|EKOR|BKOR)$/.test(cleanModel)) {
-                                foundModels.add(cleanModel);
-                            }
+                    if (matches) {
+                        matches.forEach(model => {
+                            foundModels.add(model);
                         });
                     }
                 }
 
-                // 4. 리스트 출력
+                // 리스트 출력
                 foundModels.forEach(model => {
                     const div = document.createElement("div");
                     div.className = "item";
