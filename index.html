@@ -32,29 +32,22 @@
                     const page = await pdf.getPage(i);
                     const text = (await page.getTextContent()).items.map(it => it.str).join(" ");
                     
-                    // 1. 특수 확장자(BKOR, EKOR)를 가진 모델명은 우선 수집
-                    const specialMatches = text.match(/(SQ|FQ)[A-Z0-9]{4,15}\.(BKOR|EKOR)/g);
-                    if (specialMatches) {
-                        specialMatches.forEach(m => foundModels.add(m));
-                    }
-
-                    // 2. 일반 모델명 중 .AKOR이 붙은 것들은 모두 수집하되,
-                    // 세트 모델명과 자재 모델명 사이의 간섭을 피하기 위해 
-                    // SQ 또는 FQ로 시작하는 것만 엄격하게 분리
-                    const generalMatches = text.match(/(SQ|FQ)[A-Z0-9]{4,15}/g);
-                    if (generalMatches) {
-                        generalMatches.forEach(m => {
-                            // PQ 제외, 숫자만으로 구성된 세트 모델명(너무 긴 것) 제외
-                            if (!m.startsWith("PQ") && m.length < 15) {
-                                // .AKOR이 붙은 것들은 이제 화면에 표기할 때 .AKOR을 떼고 보여줌
-                                const cleanName = m.replace(".AKOR", "");
-                                foundModels.add(cleanName);
+                    // 1. SQ/FQ로 시작하는 모델코드만 추출 (PQ 제외)
+                    // .AKOR 등 뒤에 붙은 것은 일단 다 잘라내고 모델명만 가져옴
+                    const matches = text.match(/(SQ|FQ)[A-Z0-9]{4,15}/g);
+                    
+                    if (matches) {
+                        matches.forEach(m => {
+                            if (!m.startsWith("PQ") && m.length < 12) {
+                                // 2. 만약 원본 텍스트에 .BKOR이나 .EKOR이 붙어있었다면 다시 붙여줌
+                                if (text.includes(m + ".BKOR")) foundModels.add(m + ".BKOR");
+                                else if (text.includes(m + ".EKOR")) foundModels.add(m + ".EKOR");
+                                else foundModels.add(m); // .AKOR은 붙이지 않음
                             }
                         });
                     }
                 }
 
-                // 리스트 출력
                 [...foundModels].sort().forEach(model => {
                     const div = document.createElement("div");
                     div.className = "item";
@@ -65,5 +58,4 @@
             reader.readAsArrayBuffer(file);
         });
     </script>
-</body>
 </html>
