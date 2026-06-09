@@ -55,10 +55,11 @@
     </div>
 
     <div class="card" style="border-left: 5px solid #2563eb;">
-        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 사진 매칭</label>
-        <input type="file" id="cameraInput" accept="image/*" capture="environment" class="btn btn-secondary" style="padding: 8px;">
-        <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">스캔 대기 중...</div>
-    </div>
+    <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 실물 바코드 스캔</label>
+    <button id="startScanBtn" class="btn btn-primary">📷 바코드 스캐너 실행</button>
+    <div id="scanner-container" style="width: 100%; height: 250px; background: #000; display: none; margin-top: 10px; position: relative;"></div>
+    <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">스캔 대기 중...</div>
+</div>
 
     <div class="card" style="border-left: 5px solid #16a34a;">
         <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #15803d;">🔍 2단계: 수동 확인 및 확정</label>
@@ -343,39 +344,38 @@ currentPageTargetModels = uniqueProducts.map(p => p.model);
     });
 
 
-    // [5] 실시간 바코드 스캔
-document.getElementById("startScanBtn").addEventListener("click", () => {
+    // [5] 실시간 바코드 스캔 (바코드만 딱 집어서 인식하도록 설정)
+document.getElementById("startScanBtn").addEventListener("click", function() {
     const scanner = document.getElementById("scanner-container");
     scanner.style.display = "block";
-    
+
     Quagga.init({
         inputStream: {
-            name: "Live",
             type: "LiveStream",
-            target: document.querySelector('#scanner-container'),
-            constraints: { facingMode: "environment" } // 후면 카메라 우선
+            target: scanner,
+            constraints: { facingMode: "environment" } // 후면 카메라 사용
         },
         decoder: {
-            readers: ["code_128_reader", "ean_reader", "upc_reader"] // 인식 범위 확대
-        }
+            readers: ["code_128_reader", "ean_reader"], // 물류/자재용 바코드 인식
+            debug: { showCanvas: true, showPatches: true } // 테스트용
+        },
+        locate: true // 바코드 위치 찾기 활성화
     }, function(err) {
-        if (err) {
-            console.error(err);
-            alert("카메라를 사용할 수 없습니다. 권한을 확인해주세요.");
-            return;
-        }
+        if (err) { alert("카메라 실행 실패: " + err); return; }
         Quagga.start();
     });
 
-    Quagga.onDetected((result) => {
+    // 바코드 인식 성공 시
+    Quagga.onDetected(function(result) {
         const code = result.codeResult.code;
-        if (currentPageTargetModels.includes(code)) {
+        if (code) {
             document.getElementById("manualInput").value = code;
             document.getElementById("ocrResult").innerHTML = "✅ 인식 성공: " + code;
             
-            // 검수 완료 표시 기능 호출
-            document.getElementById("checkBtn").click(); 
+            // 자동으로 검수 확인 버튼 클릭
+            document.getElementById("checkBtn").click();
             
+            // 스캔 종료
             Quagga.stop();
             scanner.style.display = "none";
         }
