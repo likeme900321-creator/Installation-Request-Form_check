@@ -210,3 +210,38 @@
                     let realCust = names.find(n => !["고객명", "연락처", "전화", "설치", "설치기사", currentTechnician].includes(n));
                     if (realCust) currentCustomer = realCust;
                 }
+            }
+
+            // 3. 자재 모델명 순수 추출 (안정성 100% 확보형)
+            let rawMatches = combinedText.match(/(SQ|FQ|PQ)[A-Z0-9]{4,15}(\s*\.\s*[A-Z0-9]+)?/g) || [];
+            let tempModels = [];
+
+            rawMatches.forEach(rawModel => {
+                let model = rawModel.replace(/\s+/g, ""); 
+                if (model.includes('2026') || model.length < 5) return;
+                
+                if (!model.includes(".")) {
+                    model = model + ".AKOR";
+                }
+                if (model.endsWith("WCS.AKOR")) {
+                    model = model.replace("WCS.AKOR", "WCN.AKOR");
+                }
+                tempModels.push(model);
+            });
+
+            // 4. 추출된 배열을 바탕으로 중복도(수량) 안전 계산
+            let modelCountMap = {};
+            tempModels.forEach(m => {
+                modelCountMap[m] = (modelCountMap[m] || 0) + 1;
+            });
+
+            let uniqueModels = Object.keys(modelCountMap);
+
+            uniqueModels.forEach(model => {
+                let rawCount = modelCountMap[model];
+                // 의뢰서 양면 특성 처리: 2번 이상 중복 발견되면 기본 2개 이상의 진짜 실물 자재 수량으로 판정
+                let finalCount = 1;
+                if (rawCount >= 4) {
+                    finalCount = Math.floor(rawCount / 2);
+                } else if (rawCount === 2 || rawCount === 3) {
+                    // 특정 페이지에서
