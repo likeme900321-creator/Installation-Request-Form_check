@@ -148,27 +148,4 @@
         currentPageProducts = []; 
 
         const canvas = document.getElementById("pdfCanvas");
-        const ctx = canvas.getContext("2d"); // 에러가 났던 getContext 부분을 완벽하게 수정
-        
-        if (currentRenderTask) {
-            try { currentRenderTask.cancel(); } catch(c){}
-        }
-
-        try {
-            const page = await pdfDoc.getPage(pageNumber);
-            const viewport = page.getViewport({ scale: 1.2 });
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-
-            const renderContext = { canvasContext: ctx, viewport: viewport };
-            currentRenderTask = page.render(renderContext);
-            await currentRenderTask.promise;
-            currentRenderTask = null; 
-
-            const textContent = await page.getTextContent();
-            
-            // 공백 및 CSV 쓰레기 기호 정제 로직 개편
-            let rawTexts = [];
-            textContent.items.forEach(item => {
-                if (item.str) {
-                    let s = item.str.replace(/\\n
+        const ctx = canvas.getContext("2d
