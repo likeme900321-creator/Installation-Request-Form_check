@@ -446,6 +446,7 @@
         } catch(err) {
             console.error("스캔 오류:", err);
             document.getElementById("ocrResult").innerHTML = `❌ 오류: ${err.message}`;
+        }
     });
 
     // 선명도 계산 (라플라시안 - 값이 클수록 선명)
