@@ -1,0 +1,760 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daon E.N.G 에어컨 자재 검수 시스템</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Arial', sans-serif; background-color: #f1f5f9; padding: 15px; margin: 0; color: #1e293b; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        h2 { text-align: center; color: #1e3a8a; margin-top: 0; font-size: 20px; }
+        .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+        .btn { width: 100%; padding: 12px; border: none; border-radius: 6px; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 5px; }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-success { background: #16a34a; color: white; }
+        .btn-purple { background: #7c3aed; color: white; }
+        .btn-red { background: #dc2626; color: white; }
+        .model-item { padding: 8px; border-bottom: 1px solid #e2e8f0; transition: all 0.3s; }
+        .checked { text-decoration: line-through; color: #94a3b8; font-weight: normal !important; }
+        .page-ctrl { display: flex; justify-content: space-between; gap: 10px; margin: 10px 0; }
+        .page-ctrl button { flex: 1; padding: 10px; font-weight: bold; background: #e2e8f0; border: none; border-radius: 6px; cursor: pointer; font-size: 15px; }
+        #pdfCanvas { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; margin-top: 10px; background: #e2e8f0; }
+
+        /* 카메라 영역 */
+        #scanner-container { display: none; margin-top: 10px; border-radius: 10px; overflow: hidden; background: #000; }
+        #scan-video { width: 100%; max-height: 340px; object-fit: cover; display: block; }
+        #scan-overlay {
+            position: relative;
+            background: #000;
+        }
+        #scan-overlay::after {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70%; height: 40%;
+            border: 2px solid #22c55e;
+            border-radius: 6px;
+            pointer-events: none;
+        }
+        .scan-bottom { background: rgba(0,0,0,0.85); padding: 10px; }
+        .scan-hint { color: #94a3b8; font-size: 12px; text-align: center; margin-bottom: 8px; }
+        .scan-btns { display: flex; gap: 8px; }
+        .scan-capture-btn { flex: 2; padding: 12px; background: #22c55e; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; }
+        .scan-cancel-btn { flex: 1; padding: 12px; background: #475569; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; }
+
+        /* 검수 내역 모달 */
+        .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: flex-end; justify-content: center; }
+        .modal-bg.on { display: flex; }
+        .modal-box { background: white; border-radius: 20px 20px 0 0; width: 100%; max-width: 600px; max-height: 80vh; overflow-y: auto; padding: 20px; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .modal-close { background: #e2e8f0; border: none; border-radius: 50%; width: 32px; height: 32px; font-size: 16px; cursor: pointer; }
+        .history-item { padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 6px; background: white; font-size: 13px; }
+        .history-item .tech { font-weight: 700; color: #2563eb; }
+        .history-item .model { color: #b91c1c; font-weight: 600; font-size: 15px; }
+        .history-item .time { color: #94a3b8; font-size: 11px; }
+        .tab-row { display: flex; gap: 6px; margin-bottom: 12px; }
+        .tab-day { flex: 1; padding: 7px; border: 1.5px solid #e2e8f0; border-radius: 8px; background: white; font-size: 12px; font-weight: 700; cursor: pointer; text-align: center; color: #64748b; }
+        .tab-day.on { border-color: #2563eb; color: #2563eb; background: #eff6ff; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Daon E.N.G 자재 검수 시스템</h2>
+
+    <button class="btn btn-purple" onclick="openHistory()" style="margin-bottom:15px;">
+        📋 검수 내역 확인 (최근 3일)
+    </button>
+
+    <div class="card">
+        <label style="font-weight: bold; display: block; margin-bottom: 8px; font-size: 14px;">📄 설치의뢰서 PDF 등록</label>
+        <input type="file" id="pdfFile" accept="application/pdf" style="width: 100%; font-size: 13px;">
+    </div>
+
+    <div class="card" style="background: #edf2f7; border-color: #cbd5e1; display: flex; gap: 8px; align-items: center;">
+        <label style="font-size: 14px; font-weight: bold; color: #2d3748; white-space: nowrap;">👷 기사명 검색:</label>
+        <input type="text" id="techSearchInput" placeholder="기사님 성함 입력" style="flex: 1; padding: 8px 12px; border: 1px solid #a0aec0; border-radius: 6px; font-size: 14px; font-weight: bold;">
+        <button id="searchBtn" style="padding: 8px 14px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">검색</button>
+        <button id="clearSearchBtn" style="padding: 8px 14px; background: #4a5568; color: white; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: bold;">전체</button>
+    </div>
+
+    <div class="page-ctrl">
+        <button id="prevPageBtn">◀ 이전</button>
+        <button id="nextPageBtn">다음 ▶</button>
+    </div>
+    <div id="pageIndicator" style="text-align: center; font-weight: bold; color: #475569; font-size: 14px; margin-bottom: 10px;">
+        의뢰서 파일을 선택해 주세요.
+    </div>
+
+    <div id="orderList" class="card" style="min-height: 80px; background: #fafafa;">
+        <span style="color: #94a3b8; font-size: 13px;">자재 목록이 여기에 출력됩니다.</span>
+    </div>
+
+    <div class="card" style="border-left: 5px solid #2563eb;">
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #1e3a8a;">📸 1단계: 스티커 스캔</label>
+        <button id="startScanBtn" class="btn btn-primary">📷 카메라 열기</button>
+
+        <!-- 카메라 영역 -->
+        <div id="scanner-container">
+            <div id="scan-overlay">
+                <video id="scan-video" autoplay playsinline muted></video>
+            </div>
+            <canvas id="scan-canvas" style="display:none"></canvas>
+            <div class="scan-bottom">
+                <div class="scan-hint">📦 초록 박스 안에 스티커 모델명을 맞춰주세요</div>
+                <div class="scan-btns">
+                    <button class="scan-capture-btn" id="captureBtn">📸 찍기</button>
+                    <button class="scan-cancel-btn" id="stopScanBtn">✕ 취소</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="ocrResult" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #475569;">스캔 대기 중...</div>
+    </div>
+
+    <div class="card" style="border-left: 5px solid #16a34a;">
+        <label style="font-weight: bold; display: block; margin-bottom: 5px; color: #15803d;">🔍 2단계: 수동 확인 및 확정</label>
+        <input type="text" id="manualInput" placeholder="모델명 직접 입력 또는 자동 입력창" style="width:95%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 8px; font-size: 14px;">
+        <button id="checkBtn" class="btn btn-success">✅ 상차 자재 검수 확정</button>
+        <div id="status" style="margin-top: 10px; text-align: center; font-size: 15px;"></div>
+    </div>
+
+    <!-- 검수 완료 후 사진 촬영 섹션 -->
+    <div id="photoSection" style="display:none; margin-bottom:15px;">
+        <div class="card" style="border-left:5px solid #f59e0b;">
+            <label style="font-weight:bold;display:block;margin-bottom:5px;color:#b45309;">📷 검수 완료 사진 촬영</label>
+            <p style="font-size:13px;color:#64748b;margin:0 0 10px;">전체 자재를 한 화면에 모아두고 사진을 찍어주세요.</p>
+            <button id="startPhotoBtn" class="btn" style="background:#f59e0b;color:white;">📸 자재 전체 사진 촬영</button>
+            <div id="photoContainer" style="display:none;margin-top:10px;">
+                <div style="position:relative;background:#000;border-radius:8px;overflow:hidden;">
+                    <video id="photo-video" autoplay playsinline muted style="width:100%;max-height:300px;object-fit:cover;display:block;"></video>
+                    <div style="background:rgba(0,0,0,0.8);padding:10px;">
+                        <div style="color:#fff;font-size:12px;text-align:center;margin-bottom:8px;">📦 모든 자재가 화면에 보이도록 맞춰주세요</div>
+                        <div style="display:flex;gap:8px;">
+                            <button id="capturePhotoBtn" style="flex:2;padding:12px;background:#f59e0b;color:white;border:none;border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer;">📸 촬영</button>
+                            <button id="cancelPhotoBtn" style="flex:1;padding:12px;background:#475569;color:white;border:none;border-radius:8px;font-size:14px;font-weight:bold;cursor:pointer;">✕ 취소</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="photoPreview" style="margin-top:10px;display:none;">
+                <img id="capturedPhoto" style="width:100%;border-radius:8px;border:2px solid #f59e0b;" />
+                <div style="display:flex;gap:8px;margin-top:8px;">
+                    <button id="savePhotoBtn" class="btn" style="background:#16a34a;color:white;">✅ 저장 완료</button>
+                    <button id="retakePhotoBtn" class="btn" style="background:#64748b;color:white;">🔄 다시 찍기</button>
+                </div>
+            </div>
+            <div id="photoStatus" style="margin-top:8px;font-size:13px;font-weight:bold;color:#475569;"></div>
+        </div>
+    </div>
+
+    <div style="font-weight: bold; margin-top: 15px; font-size: 13px; color: #64748b;">📄 원본 의뢰서 미리보기</div>
+    <div style="width:100%; overflow:auto; border: 1px solid #cbd5e1; background:#e2e8f0; margin-top:10px;">
+        <canvas id="pdfCanvas"></canvas>
+    </div>
+</div>
+
+<!-- 검수 내역 모달 -->
+<div class="modal-bg" id="historyModal">
+    <div class="modal-box">
+        <div class="modal-header">
+            <span style="font-size:17px; font-weight:800;">📋 검수 내역 (최근 3일)</span>
+            <button class="modal-close" onclick="closeHistory()">✕</button>
+        </div>
+        <div class="tab-row" id="dayTabs"></div>
+        <div id="historyContent">
+            <div style="text-align:center; color:#94a3b8; padding:30px;">불러오는 중...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ── Supabase 설정 (검수 내역 저장용) ──
+    const SUPABASE_URL = 'https://zsgexwuyrjankyojmvys.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzZ2V4d3V5cmphbmt5b2ptdnlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1MTg5MDMsImV4cCI6MjA5NzA5NDkwM30.SlY9C88IXX4PUY7Of1SfyOI1rQzbqYTSS06kAuJR70c';
+    const { createClient } = supabase;
+    const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // ── Edge Function URL (Google Vision 경유) ──
+    const EDGE_FUNCTION_URL = SUPABASE_URL + '/functions/v1/claude-proxy';
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+    let pdfDoc = null, currentPdfPage = 1, totalPdfPages = 0;
+    let currentPageTargetModels = [], currentRenderTask = null;
+    let currentTechName = '미지정';
+    let scanStream = null;
+
+    // 페이지별 검수 상태 저장 (페이지 이동해도 유지)
+    // { pageNum: { checkedModels: Set, techName: string } }
+    const pageCheckState = {};
+
+    const KNOWN_TECHNICIANS = [
+        "강정환","강진수","공병철","국승욱","김영금","김응돌","김지흥","김태근",
+        "김남률","민지운","박건우","박은철","박종덕","박종선","배철옥","백인수",
+        "손성훈","안종수","양호진","우준혁","유경민","이동하","이대흥","이성우",
+        "이승호","이시복","이용신","이철훈","전용호","정권","정승백","정승영",
+        "정한주","정호진","조운형","주세환","주병윤","진호관","채건병","천명석",
+        "최병일","최정규","홍창표"
+    ];
+
+    // [1] PDF 파일 선택
+    document.getElementById("pdfFile").addEventListener("change", function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById("pageIndicator").innerText = "📄 불러오는 중...";
+        const reader = new FileReader();
+        reader.onload = async function() {
+            try {
+                pdfDoc = await pdfjsLib.getDocument({
+                    data: new Uint8Array(this.result),
+                    cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/cmaps/',
+                    cMapPacked: true
+                }).promise;
+                totalPdfPages = pdfDoc.numPages;
+                currentPdfPage = 1;
+                await loadAndRenderPage(1);
+            } catch(err) { alert("⚠️ PDF 인식 실패. 새로고침 후 다시 시도해주세요."); }
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    // [2] 페이지 렌더링
+    async function loadAndRenderPage(pageNumber) {
+        if (!pdfDoc) return;
+        document.getElementById("manualInput").value = "";
+        document.getElementById("ocrResult").innerHTML = "<span style='color:#64748b;'>📸 카메라로 스티커를 촬영해 주세요.</span>";
+        document.getElementById("status").innerHTML = `<span style="color:#475569;font-weight:bold;">검수 대기</span>`;
+        currentPageTargetModels = [];
+
+        const canvas = document.getElementById("pdfCanvas");
+        const ctx = canvas.getContext("2d");
+        if (currentRenderTask) { try { currentRenderTask.cancel(); } catch(c){} currentRenderTask = null; }
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        try {
+            const page = await pdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({ scale: 1.2 });
+            canvas.height = viewport.height; canvas.width = viewport.width;
+            currentRenderTask = page.render({ canvasContext: ctx, viewport });
+            await currentRenderTask.promise;
+            currentRenderTask = null;
+
+            const textContent = await page.getTextContent();
+            let pageText = textContent.items.map(i => i.str || "").join(" ");
+            pageText = pageText.replace(/[\r\n\t,`"''"]|\s+/g, " ").trim();
+            const compressed = pageText.replace(/\s+/g, "");
+
+            // 기사명 추출
+            let techName = "미지정";
+            for (let tech of KNOWN_TECHNICIANS) {
+                if (compressed.includes("설치기사" + tech) || compressed.includes(tech)) { techName = tech; break; }
+            }
+            if (techName === "미지정") {
+                const m = pageText.match(/설치기사\s+([가-힣]{2,4})/i);
+                if (m) techName = m[1].trim();
+            }
+            currentTechName = techName;
+
+            // 고객명 추출
+            let customerName = "미확인";
+            const custIdx = pageText.indexOf("고객명");
+            if (custIdx !== -1) {
+                const names = pageText.substring(custIdx, custIdx+30).match(/([가-힣]{2,4})/g);
+                if (names) {
+                    const real = names.find(n => !["고객명","연락처","전화","설치","설치기사",techName].includes(n));
+                    if (real) customerName = real;
+                }
+            }
+
+            // 모델명 추출: SQ/FQ/SW/FW(에어컨), PQ/PW(배관자재), PC(커버), PS(시그니처), PU/UU/PN(중대형), M-(바스)
+            const upperText = pageText.toUpperCase();
+            const ALL_MODEL_RE = /(?:SQ|FQ|SW|FW|PQ|PW|PC|PS|PU|UU|PN)[A-Z0-9]{4,12}(?:\.[A-Z0-9]+)?|M-[A-Z0-9]+(?:\.[A-Z0-9]+)?/g;
+            const rawMatches = upperText.match(ALL_MODEL_RE) || [];
+            const seenModels = new Set();
+            const uniqueProducts = [];
+            for (let m of rawMatches) {
+                const base = m.split(".")[0];
+                const isFQSQ = /^(SQ|FQ|SW|FW)/.test(m);
+                const isPQPW = /^(PQ|PW)/.test(m);
+                // FQ/SQ/SW/FW: 끝 3자리에 숫자 있으면 세트모델명 → 제외
+                if (isFQSQ && /\d/.test(base.slice(-3))) continue;
+                // FQ/SQ/SW/FW: 끝이 S이면 세트모델명 → 제외
+                if (isFQSQ && base.endsWith("S")) continue;
+                // PQ/PW: 숫자로 끝나야 유효 (아닌 경우 제외)
+                if (isPQPW && !/\d$/.test(base)) continue;
+                // SQ06FA1WAJ만 확장자 유지 (AKOR/BKOR/EKOR 세 종류라 구분 필요)
+                // 나머지는 확장자 제거
+                const base2 = m.split('.')[0];
+                const ext = m.includes('.') ? m.split('.')[1] : '';
+                const cleanModel = base2 === 'SQ06FA1WAJ' ? `${base2}.${ext}` : base2;
+                if (!seenModels.has(cleanModel)) { seenModels.add(cleanModel); uniqueProducts.push(cleanModel); }
+            }
+            // 이 페이지의 저장된 체크 상태 불러오기
+            if(!pageCheckState[pageNumber]) {
+                pageCheckState[pageNumber] = { checkedModels: new Set(), techName };
+            }
+            const checkedSet = pageCheckState[pageNumber].checkedModels;
+            const checkedCount = checkedSet.size;
+
+            document.getElementById("orderList").innerHTML = `
+                <div style="background:#e0f2fe;color:#0369a1;padding:10px;border-radius:6px;margin-bottom:10px;font-weight:bold;">
+                    👷 <span style="font-size:16px;color:#0284c7;">${techName}</span> 기사님
+                    ${checkedCount > 0 ? `<span style="float:right;background:#16a34a;color:white;padding:2px 8px;border-radius:10px;font-size:12px;">${checkedCount}/${uniqueProducts.length} 완료</span>` : ''}
+                </div>
+                <div style="font-weight:bold;margin-bottom:6px;font-size:13px;color:#4f46e5;">[배정 자재 목록]</div>
+                ${uniqueProducts.length === 0
+                    ? `<div style="color:#64748b;font-size:13px;padding:10px;background:#f1f5f9;border-radius:6px;">배정 자재가 없습니다.</div>`
+                    : uniqueProducts.map((model, idx) => {
+                        const modelId = model.replace(/[^a-zA-Z0-9]/g,'');
+                        const isChecked = checkedSet.has(model);
+                        return `<div id="model-${modelId}" class="model-item ${isChecked ? 'checked' : ''}">
+                            • <b>자재 ${idx+1}:</b>
+                            <span style="color:#b91c1c;font-weight:bold;font-size:15px;">${model}</span>
+                            <span style="float:right;font-weight:bold;">1 개${isChecked ? ' ✅' : ''}</span>
+                        </div>`;
+                    }).join('')
+                }
+            `;
+
+            // 전체 완료 버튼 표시
+            const allDone = uniqueProducts.length > 0 && uniqueProducts.every(m => checkedSet.has(m));
+            document.getElementById("pageIndicator").innerText = `의뢰서 ${pageNumber} / ${totalPdfPages} 장`;
+            document.getElementById("status").innerHTML = allDone
+                ? `<span style="color:#16a34a;font-weight:bold;">✅ 이 페이지 검수 완료!</span>`
+                : `<span style="color:#2563eb;font-weight:bold;">검수 대기 (${checkedCount}/${currentPageTargetModels.length}개 완료)</span>`;
+
+            // 전체 완료 시 사진 촬영 버튼 표시
+            document.getElementById("photoSection").style.display = allDone ? 'block' : 'none';
+        } catch(err) {
+            document.getElementById("pageIndicator").innerText = `⚠️ ${pageNumber}페이지 이동 실패`;
+        }
+    }
+
+    // [3] 기사명 검색
+    document.getElementById("searchBtn").addEventListener("click", async function() {
+        const query = document.getElementById("techSearchInput").value.trim();
+        if (!pdfDoc) { alert("PDF를 먼저 올려주세요!"); return; }
+        if (!query) { alert("기사님 성함을 입력해 주세요."); return; }
+        document.getElementById("pageIndicator").innerText = `🔍 '${query}' 기사님 찾는 중...`;
+        let foundPage = -1;
+        for (let p = 1; p <= totalPdfPages; p++) {
+            const page = await pdfDoc.getPage(p);
+            const tc = await page.getTextContent();
+            const compressed = tc.items.map(i => i.str||"").join("").replace(/\s/g,"");
+            if (compressed.includes("설치기사"+query) || compressed.includes(query)) { foundPage = p; break; }
+        }
+        if (foundPage !== -1) { currentPdfPage = foundPage; await loadAndRenderPage(currentPdfPage); }
+        else alert(`❌ '${query}' 기사님은 이 문서에 없습니다.`);
+    });
+
+    document.getElementById("clearSearchBtn").addEventListener("click", async function() {
+        document.getElementById("techSearchInput").value = "";
+        if (pdfDoc) { currentPdfPage = 1; await loadAndRenderPage(1); }
+    });
+
+    // [4] 이전/다음
+    document.getElementById("prevPageBtn").addEventListener("click", async function() {
+        if (!pdfDoc) return;
+        if (currentPdfPage > 1) { currentPdfPage--; await loadAndRenderPage(currentPdfPage); }
+        else alert("첫 번째 페이지입니다.");
+    });
+    document.getElementById("nextPageBtn").addEventListener("click", async function() {
+        if (!pdfDoc) return;
+        if (currentPdfPage < totalPdfPages) { currentPdfPage++; await loadAndRenderPage(currentPdfPage); }
+        else alert("마지막 페이지입니다.");
+    });
+
+    // [5] 카메라 - 버튼 눌러서 직접 찍기
+    document.getElementById("startScanBtn").addEventListener("click", async function() {
+        document.getElementById("scanner-container").style.display = "block";
+        document.getElementById("ocrResult").innerHTML = "📷 카메라 준비 중...";
+        try {
+            scanStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+            });
+            document.getElementById("scan-video").srcObject = scanStream;
+            await document.getElementById("scan-video").play();
+            document.getElementById("ocrResult").innerHTML = "📦 초록 박스 안에 스티커를 맞추고 📸 찍기 버튼을 누르세요";
+        } catch(err) {
+            document.getElementById("ocrResult").innerHTML = "❌ 카메라 실행 실패: " + err.message;
+            document.getElementById("scanner-container").style.display = "none";
+        }
+    });
+
+    // 찍기 버튼 - 0.3초 간격 3장 연속 촬영 후 가장 선명한 1장 선택 (떨림 보정)
+    document.getElementById("captureBtn").addEventListener("click", async function() {
+        const btn = document.getElementById("captureBtn");
+        btn.disabled = true;
+        btn.textContent = "📸 촬영 중...";
+        document.getElementById("ocrResult").innerHTML = "📸 떨림 보정 중... (3장 연속 촬영)";
+
+        const video = document.getElementById("scan-video");
+        const frames = [];
+
+        // 0.3초 간격으로 3장 촬영
+        for (let i = 0; i < 3; i++) {
+            await new Promise(r => setTimeout(r, i === 0 ? 0 : 300));
+            const canvas = document.getElementById("scan-canvas");
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(video, 0, 0);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const sharpness = calcSharpness(imageData);
+            const base64 = canvas.toDataURL("image/jpeg", 0.95).split(",")[1];
+            frames.push({ base64, sharpness });
+            document.getElementById("ocrResult").innerHTML = `📸 촬영 중... (${i+1}/3장)`;
+        }
+
+        // 가장 선명한 프레임 선택
+        frames.sort((a, b) => b.sharpness - a.sharpness);
+        const base64 = frames[0].base64;
+
+        btn.disabled = false;
+        btn.textContent = "📸 찍기";
+
+        stopScan();
+        document.getElementById("ocrResult").innerHTML = "🔍 AI 분석 중... 잠시만 기다려주세요";
+
+        try {
+            document.getElementById("ocrResult").innerHTML = "🔍 Vision AI 분석 중...";
+
+            const res = await fetch(EDGE_FUNCTION_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${SUPABASE_KEY}`
+                },
+                body: JSON.stringify({ base64 })
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                document.getElementById("ocrResult").innerHTML = `❌ 오류 (${res.status})<br><small style="color:#94a3b8">${errText}</small>`;
+                return;
+            }
+
+            const data = await res.json();
+            console.log("Vision API 응답:", data);
+
+            if (data.error) {
+                document.getElementById("ocrResult").innerHTML = `❌ API 오류: ${JSON.stringify(data.error)}`;
+                return;
+            }
+
+            // 텍스트 추출
+            const annotations = data.responses?.[0]?.textAnnotations || [];
+            const fullText = annotations[0]?.description?.toUpperCase() || "";
+            console.log("인식된 전체 텍스트:", fullText);
+
+            // 모델명 패턴 전부 추출
+            // SQ/FQ/SW/FW: 에어컨 실내기·실외기
+            // M-: 바스 에어컨
+            // PC: 에어컨 커버
+            // PS: 시그니처 부속
+            // PU/UU: 중대형 냉난방기
+            // PN: 중대형 배관
+            // PQ/PW: 배관 자재 (검수 대상)
+            // WAJ 모델명 + 다음 줄 확장자(AKOR/BKOR/EKOR) 합치기
+            // 박스 라벨: "SQ06FA1WAJ\nAKOR" → "SQ06FA1WAJ.AKOR"
+            const processedText = fullText.replace(
+                /([A-Z0-9]+WAJ)[\r\n\s]+(AKOR|BKOR|EKOR)/g,
+                '$1.$2'
+            );
+
+            const MODEL_PATTERN = /(SQ|FQ|SW|FW|PC|PS|PU|UU|PN|PQ|PW)[A-Z0-9]{4,12}(?:\.[A-Z0-9]+)?|M-[A-Z0-9]+(?:\.[A-Z0-9]+)?/g;
+            const foundModels = processedText.match(MODEL_PATTERN) || [];
+            console.log("인식된 모델명:", foundModels);
+
+            if (foundModels.length === 0) {
+                document.getElementById("ocrResult").innerHTML = `
+                    ❌ 모델명 인식 실패<br>
+                    <small style="color:#94a3b8">인식된 텍스트: ${fullText.substring(0,100)}</small><br>
+                    <small style="color:#2563eb">→ 모델명을 수동으로 입력해주세요</small>
+                `;
+                return;
+            }
+
+            // 의뢰서 목록과 대조해서 일치하는 것만 자동 체크
+            let matchedCount = 0;
+            let notMatched = [];
+
+            foundModels.forEach(model => {
+                if (currentPageTargetModels.includes(model)) {
+                    const modelId = model.replace(/[^a-zA-Z0-9]/g, '');
+                    const targetDiv = document.getElementById(`model-${modelId}`);
+                    if (targetDiv && !targetDiv.classList.contains('checked')) {
+                        targetDiv.classList.add('checked');
+                        if (!targetDiv.innerHTML.includes('✅')) targetDiv.innerHTML += ' ✅';
+                        matchedCount++;
+
+                        // 페이지 체크 상태 저장
+                        if(!pageCheckState[currentPdfPage]) pageCheckState[currentPdfPage] = { checkedModels: new Set(), techName: currentTechName };
+                        pageCheckState[currentPdfPage].checkedModels.add(model);
+
+                        // Supabase 저장
+                        sb.from('inspection_history').insert({
+                            tech_name: currentTechName,
+                            page_number: currentPdfPage,
+                            model_name: model
+                        }).then(() => {
+                            const threeDaysAgo = new Date(Date.now() - 3*24*60*60*1000).toISOString();
+                            sb.from('inspection_history').delete().lt('inspected_at', threeDaysAgo);
+                        });
+                    }
+                } else {
+                    notMatched.push(model);
+                }
+            });
+
+            // 결과 표시
+            const checkedAll = currentPageTargetModels.every(m => {
+                const modelId = m.replace(/[^a-zA-Z0-9]/g, '');
+                const div = document.getElementById(`model-${modelId}`);
+                return div && div.classList.contains('checked');
+            });
+
+            let resultHtml = '';
+            if (matchedCount > 0) {
+                resultHtml += `<div style="color:#16a34a;font-weight:bold;margin-bottom:6px;">✅ ${matchedCount}개 자동 검수 완료!</div>`;
+            }
+            if (notMatched.length > 0) {
+                resultHtml += `<div style="color:#94a3b8;font-size:12px;margin-bottom:6px;">📦 의뢰서 외 인식: ${notMatched.join(', ')}</div>`;
+            }
+            if (checkedAll && currentPageTargetModels.length > 0) {
+                resultHtml += `<div style="color:#2563eb;font-weight:bold;">🎉 이 페이지 검수 완료!</div>`;
+                document.getElementById("status").innerHTML = `<span style="color:#16a34a;font-weight:bold;">✅ 전체 검수 완료!</span>`;
+            } else if (matchedCount === 0) {
+                resultHtml += `<div style="color:#dc2626;">❌ 의뢰서 목록과 일치하는 모델이 없습니다.</div>`;
+            }
+            document.getElementById("ocrResult").innerHTML = resultHtml;
+        } catch(err) {
+            console.error("스캔 오류:", err);
+            document.getElementById("ocrResult").innerHTML = `❌ 오류: ${err.message}`;
+        }
+    });
+
+    // 선명도 계산 (라플라시안 - 값이 클수록 선명)
+    function calcSharpness(imageData) {
+        const data = imageData.data, w = imageData.width;
+        let sum = 0, count = 0;
+        // 전체 픽셀의 10%만 샘플링 (속도 최적화)
+        const step = 10;
+        for (let i = w; i < data.length/4 - w; i += step) {
+            const idx = i * 4;
+            const gray    = 0.299*data[idx]      + 0.587*data[idx+1]      + 0.114*data[idx+2];
+            const grayUp  = 0.299*data[idx-w*4]  + 0.587*data[idx-w*4+1]  + 0.114*data[idx-w*4+2];
+            const grayDn  = 0.299*data[idx+w*4]  + 0.587*data[idx+w*4+1]  + 0.114*data[idx+w*4+2];
+            sum += Math.abs(2*gray - grayUp - grayDn);
+            count++;
+        }
+        return count > 0 ? sum/count : 0;
+    }
+
+    // 취소 버튼
+    document.getElementById("stopScanBtn").addEventListener("click", stopScan);
+
+    function stopScan() {
+        if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+        document.getElementById("scanner-container").style.display = "none";
+    }
+
+    // [6] 검수 확정 + Supabase 저장
+    document.getElementById("checkBtn").addEventListener("click", async function() {
+        const modelToCompare = document.getElementById("manualInput").value.trim().toUpperCase();
+        const statusDiv = document.getElementById("status");
+        if (!modelToCompare) { alert("모델명을 입력하거나 카메라 스캔을 먼저 해주세요."); return; }
+
+        const isPassed = currentPageTargetModels.includes(modelToCompare);
+
+        if (isPassed) {
+            const modelId = modelToCompare.replace(/[^a-zA-Z0-9]/g,'');
+            const targetDiv = document.getElementById(`model-${modelId}`);
+            if (targetDiv) { targetDiv.classList.add("checked"); if (!targetDiv.innerHTML.includes("✅")) targetDiv.innerHTML += " ✅"; }
+            statusDiv.innerHTML = `<span style="color:#16a34a;font-weight:bold;">✅ 상차 완료 승인 (${modelToCompare})</span>`;
+
+            // 페이지 체크 상태 저장
+            if(!pageCheckState[currentPdfPage]) pageCheckState[currentPdfPage] = { checkedModels: new Set(), techName: currentTechName };
+            pageCheckState[currentPdfPage].checkedModels.add(modelToCompare);
+
+            // 전체 완료 체크
+            const allDone = currentPageTargetModels.length > 0 && currentPageTargetModels.every(m => pageCheckState[currentPdfPage].checkedModels.has(m));
+            if(allDone) {
+                statusDiv.innerHTML = `<span style="color:#16a34a;font-weight:bold;">🎉 이 페이지 검수 완료!</span>`;
+                document.getElementById("photoSection").style.display = 'block';
+            }
+
+            // Supabase 저장
+            try {
+                await sb.from('inspection_history').insert({
+                    tech_name: currentTechName,
+                    page_number: currentPdfPage,
+                    model_name: modelToCompare
+                });
+                const threeDaysAgo = new Date(Date.now() - 3*24*60*60*1000).toISOString();
+                await sb.from('inspection_history').delete().lt('inspected_at', threeDaysAgo);
+            } catch(e) { console.error('저장 실패:', e); }
+        } else {
+            statusDiv.innerHTML = `<span style="color:#dc2626;font-weight:bold;">⚠️ 목록에 없는 품목입니다.</span>`;
+        }
+    });
+
+    // [7] 검수 내역 모달
+    async function openHistory() {
+        document.getElementById("historyModal").classList.add("on");
+        document.getElementById("historyContent").innerHTML = `<div style="text-align:center;color:#94a3b8;padding:30px;">불러오는 중...</div>`;
+        document.getElementById("dayTabs").innerHTML = '';
+        try {
+            const threeDaysAgo = new Date(Date.now() - 3*24*60*60*1000).toISOString();
+            const { data, error } = await sb.from('inspection_history')
+                .select('*').gte('inspected_at', threeDaysAgo)
+                .order('inspected_at', { ascending: false });
+            if (error) throw error;
+            if (!data || data.length === 0) {
+                document.getElementById("historyContent").innerHTML = `<div style="text-align:center;color:#94a3b8;padding:30px;">최근 3일간 검수 내역이 없습니다.</div>`;
+                return;
+            }
+            const grouped = {};
+            data.forEach(item => {
+                const d = new Date(item.inspected_at);
+                const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                const label = `${d.getMonth()+1}월 ${d.getDate()}일`;
+                if (!grouped[key]) grouped[key] = { label, items: [] };
+                grouped[key].items.push(item);
+            });
+            const days = Object.keys(grouped).sort().reverse();
+            const tabRow = document.getElementById("dayTabs");
+            days.forEach((day, idx) => {
+                const btn = document.createElement('button');
+                btn.className = 'tab-day' + (idx===0?' on':'');
+                btn.textContent = grouped[day].label + ` (${grouped[day].items.length}건)`;
+                btn.onclick = () => {
+                    document.querySelectorAll('.tab-day').forEach(b => b.classList.remove('on'));
+                    btn.classList.add('on');
+                    renderHistoryDay(grouped[day].items);
+                };
+                tabRow.appendChild(btn);
+            });
+            renderHistoryDay(grouped[days[0]].items);
+        } catch(e) {
+            document.getElementById("historyContent").innerHTML = `<div style="text-align:center;color:#dc2626;padding:30px;">불러오기 실패: ${e.message}</div>`;
+        }
+    }
+
+    function renderHistoryDay(items) {
+        let html = `<div style="font-size:12px;color:#64748b;margin-bottom:10px;">총 ${items.length}건 검수 완료</div>`;
+        items.forEach(item => {
+            const d = new Date(item.inspected_at);
+            const timeStr = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+            html += `<div class="history-item">
+                <span class="time">${timeStr}</span>
+                <div style="margin-top:3px;"><span class="tech">👷 ${item.tech_name} 기사님</span></div>
+                <div style="margin-top:3px;"><span class="model">📦 ${item.model_name}</span></div>
+            </div>`;
+        });
+        document.getElementById("historyContent").innerHTML = html;
+    }
+
+    function closeHistory() { document.getElementById("historyModal").classList.remove("on"); }
+
+    // [8] 자재 전체 사진 촬영 + Supabase Storage 저장
+    let photoStream = null;
+
+    document.getElementById("startPhotoBtn").addEventListener("click", async function() {
+        document.getElementById("photoContainer").style.display = "block";
+        document.getElementById("photoPreview").style.display = "none";
+        document.getElementById("photoStatus").textContent = "";
+        try {
+            photoStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+            });
+            document.getElementById("photo-video").srcObject = photoStream;
+            await document.getElementById("photo-video").play();
+        } catch(err) {
+            document.getElementById("photoStatus").textContent = "❌ 카메라 실행 실패: " + err.message;
+            document.getElementById("photoContainer").style.display = "none";
+        }
+    });
+
+    document.getElementById("capturePhotoBtn").addEventListener("click", function() {
+        const video = document.getElementById("photo-video");
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext("2d").drawImage(video, 0, 0);
+
+        // 카메라 끄기
+        if(photoStream) { photoStream.getTracks().forEach(t => t.stop()); photoStream = null; }
+        document.getElementById("photoContainer").style.display = "none";
+
+        // 미리보기 표시
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+        document.getElementById("capturedPhoto").src = dataUrl;
+        document.getElementById("photoPreview").style.display = "block";
+
+        // base64 임시 저장
+        document.getElementById("capturedPhoto").dataset.base64 = dataUrl.split(",")[1];
+    });
+
+    document.getElementById("retakePhotoBtn").addEventListener("click", async function() {
+        document.getElementById("photoPreview").style.display = "none";
+        document.getElementById("photoContainer").style.display = "block";
+        try {
+            photoStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+            });
+            document.getElementById("photo-video").srcObject = photoStream;
+            await document.getElementById("photo-video").play();
+        } catch(err) {
+            document.getElementById("photoStatus").textContent = "❌ 카메라 실행 실패: " + err.message;
+        }
+    });
+
+    document.getElementById("savePhotoBtn").addEventListener("click", async function() {
+        const base64 = document.getElementById("capturedPhoto").dataset.base64;
+        if(!base64) return;
+
+        document.getElementById("photoStatus").textContent = "⏳ 저장 중...";
+        document.getElementById("savePhotoBtn").disabled = true;
+
+        try {
+            // base64 → Blob 변환
+            const byteArr = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            const blob = new Blob([byteArr], { type: "image/jpeg" });
+
+            // 파일명: 기사명_페이지번호_날짜시간.jpg
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+            const timeStr = `${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+            const fileName = `${currentTechName}_p${currentPdfPage}_${dateStr}_${timeStr}.jpg`;
+
+            const { error } = await sb.storage
+                .from("inspection-photos")
+                .upload(fileName, blob, { contentType: "image/jpeg", upsert: true });
+
+            if(error) throw error;
+
+            document.getElementById("photoStatus").innerHTML = `✅ 저장 완료! <span style="color:#94a3b8;font-size:11px;">${fileName}</span>`;
+            document.getElementById("savePhotoBtn").textContent = "✅ 저장됨";
+            document.getElementById("photoPreview").style.border = "2px solid #16a34a";
+
+        } catch(err) {
+            document.getElementById("photoStatus").textContent = "❌ 저장 실패: " + err.message;
+            document.getElementById("savePhotoBtn").disabled = false;
+        }
+    });
+
+    document.getElementById("cancelPhotoBtn").addEventListener("click", function() {
+        if(photoStream) { photoStream.getTracks().forEach(t => t.stop()); photoStream = null; }
+        document.getElementById("photoContainer").style.display = "none";
+    });
+</script>
+</body>
+</html>
